@@ -4,6 +4,7 @@
  *	  POSTGRES relation scan descriptor definitions.
  *
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -23,6 +24,7 @@
 
 
 struct ParallelTableScanDescData;
+
 
 /*
  * Generic descriptor for table scans. This is the base-class for table scans,

@@ -25,6 +25,7 @@
  *
  * See gen_partprune_steps_internal() for more details on step generation.
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -37,6 +38,9 @@
 
 #include "access/hash.h"
 #include "access/nbtree.h"
+#ifdef USE_XSTORE
+#include "access/xstore/xstorehook.h"
+#endif
 #include "catalog/pg_operator.h"
 #include "catalog/pg_opfamily.h"
 #include "catalog/pg_proc.h"
@@ -3682,9 +3686,14 @@ match_boolean_partition_clause(Oid partopfamily, Expr *clause, Expr *partkey,
 	 * Partitioning currently can only use built-in AMs, so checking for
 	 * built-in boolean opfamilies is good enough.
 	 */
-	if (!IsBuiltinBooleanOpfamily(partopfamily))
+#ifdef USE_XSTORE
+	if (!IsBuiltinBooleanOpfamily(partopfamily) &&
+		!IsXBtreeBooleanOpfamily(partopfamily))
 		return PARTCLAUSE_UNSUPPORTED;
-
+#else
+	if (!IsBuiltinBooleanOpfamily(partopfamily)) 
+		return PARTCLAUSE_UNSUPPORTED;
+#endif
 	if (IsA(clause, BooleanTest))
 	{
 		BooleanTest *btest = (BooleanTest *) clause;

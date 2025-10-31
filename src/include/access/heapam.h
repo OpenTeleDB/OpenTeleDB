@@ -30,7 +30,6 @@
 #include "utils/relcache.h"
 #include "utils/snapshot.h"
 
-
 /* "options" flag bits for heap_insert */
 #define HEAP_INSERT_SKIP_FSM	TABLE_INSERT_SKIP_FSM
 #define HEAP_INSERT_FROZEN		TABLE_INSERT_FROZEN

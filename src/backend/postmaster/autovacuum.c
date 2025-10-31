@@ -51,6 +51,7 @@
  * holding the relation lock) during which a worker may choose a table that was
  * already vacuumed; this is a bug in the current design.
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -109,6 +110,9 @@
 #include "utils/timeout.h"
 #include "utils/timestamp.h"
 
+#ifdef USE_XSTORE
+#include "access/xstore/xstorehook.h"
+#endif
 
 /*
  * GUC parameters
@@ -3105,6 +3109,18 @@ relation_needs_vacanalyze(Oid relid,
 	/* ANALYZE refuses to work with pg_statistic */
 	if (relid == StatisticRelationId)
 		*doanalyze = false;
+
+#ifdef USE_XSTORE
+	/* XStore table do not vacuum, but maybe do analyze*/
+	if (GlobalXStoreHook.amHook->GetXStoreOid != NULL &&
+		classForm->relam == GlobalXStoreHook.amHook->GetXStoreOid())
+	{
+		elog(DEBUG2,
+				 "auto vacuum skipping xstore table \"%s\"",
+				 NameStr(classForm->relname));
+		*dovacuum = false;
+	}
+#endif
 }
 
 /*

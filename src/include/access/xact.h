@@ -4,6 +4,7 @@
  *	  postgres transaction system definitions
  *
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -21,6 +22,11 @@
 #include "nodes/pg_list.h"
 #include "storage/relfilelocator.h"
 #include "storage/sinval.h"
+#ifdef USE_XSTORE
+#include "postgres.h"
+#include "utils/resowner.h"
+#include "utils/palloc.h"
+#endif
 
 /*
  * Maximum size of Global Transaction ID (including '\0').
@@ -30,6 +36,12 @@
  */
 #define GIDSIZE 200
 
+#ifdef USE_XSTORE
+/* The type used to identify an undo log and position within it. */
+typedef uint64 UndoRecPtr;
+
+#define UNDO_PERSISTENCE_LEVELS 3
+#endif
 /*
  * Xact isolation levels
  */
@@ -156,6 +168,99 @@ typedef struct SavedTransactionCharacteristics
 	bool		save_XactDeferrable;
 } SavedTransactionCharacteristics;
 
+#ifdef USE_XSTORE
+/*
+ *	transaction states - transaction state from server perspective
+ */
+typedef enum TransState
+{
+	TRANS_DEFAULT,				/* idle */
+	TRANS_START,				/* transaction starting */
+	TRANS_INPROGRESS,			/* inside a valid transaction */
+	TRANS_COMMIT,				/* commit in progress */
+	TRANS_ABORT,				/* abort in progress */
+	TRANS_PREPARE,				/* prepare in progress */
+	TRANS_UNDO                  /* apply undo in progress */
+} TransState;
+
+/*
+ *	transaction block states - transaction state of client queries
+ *
+ * Note: the subtransaction states are used only for non-topmost
+ * transactions; the others appear only in the topmost transaction.
+ */
+typedef enum TBlockState
+{
+	/* not-in-transaction-block states */
+	TBLOCK_DEFAULT,				/* idle */
+	TBLOCK_STARTED,				/* running single-query transaction */
+
+	/* transaction block states */
+	TBLOCK_BEGIN,				/* starting transaction block */
+	TBLOCK_INPROGRESS,			/* live transaction */
+	TBLOCK_IMPLICIT_INPROGRESS, /* live transaction after implicit BEGIN */
+	TBLOCK_PARALLEL_INPROGRESS, /* live transaction inside parallel worker */
+	TBLOCK_END,					/* COMMIT received */
+	TBLOCK_ABORT,				/* failed xact, awaiting ROLLBACK */
+	TBLOCK_ABORT_END,			/* failed xact, ROLLBACK received */
+	TBLOCK_ABORT_PENDING,		/* live xact, ROLLBACK received */
+	TBLOCK_PREPARE,				/* live xact, PREPARE received */
+
+	/* subtransaction states */
+	TBLOCK_SUBBEGIN,			/* starting a subtransaction */
+	TBLOCK_SUBINPROGRESS,		/* live subtransaction */
+	TBLOCK_SUBRELEASE,			/* RELEASE received */
+	TBLOCK_SUBCOMMIT,			/* COMMIT received while TBLOCK_SUBINPROGRESS */
+	TBLOCK_SUBABORT,			/* failed subxact, awaiting ROLLBACK */
+	TBLOCK_SUBABORT_END,		/* failed subxact, ROLLBACK received */
+	TBLOCK_SUBABORT_PENDING,	/* live subxact, ROLLBACK received */
+	TBLOCK_SUBRESTART,			/* live subxact, ROLLBACK TO received */
+	TBLOCK_SUBABORT_RESTART,	/* failed subxact, ROLLBACK TO received */
+} TBlockState;
+
+/*
+ *	transaction state structure
+ *
+ * Note: parallelModeLevel counts the number of unmatched EnterParallelMode
+ * calls done at this transaction level.  parallelChildXact is true if any
+ * upper transaction level has nonzero parallelModeLevel.
+ */
+typedef struct TransactionStateData
+{
+	FullTransactionId fullTransactionId;	/* my FullTransactionId */
+	SubTransactionId subTransactionId;	/* my subxact ID */
+	char	   *name;			/* savepoint name, if any */
+	int			savepointLevel; /* savepoint level */
+	TransState	state;			/* low-level state */
+	TBlockState blockState;		/* high-level state */
+	int			nestingLevel;	/* transaction nesting depth */
+	int			gucNestLevel;	/* GUC context nesting depth */
+	MemoryContext curTransactionContext;	/* my xact-lifetime context */
+	ResourceOwner curTransactionOwner;	/* my query resources */
+	TransactionId *childXids;	/* subcommitted child XIDs, in XID order */
+	int			nChildXids;		/* # of subcommitted child XIDs */
+	int			maxChildXids;	/* allocated size of childXids[] */
+	Oid			prevUser;		/* previous CurrentUserId setting */
+	int			prevSecContext; /* previous SecurityRestrictionContext */
+	bool		prevXactReadOnly;	/* entry-time xact r/o state */
+	bool		startedInRecovery;	/* did we start in recovery? */
+	bool		didLogXid;		/* has xid been included in WAL record? */
+	int			parallelModeLevel;	/* Enter/ExitParallelMode counter */
+	bool		parallelChildXact;	/* is any parent transaction parallel? */
+	bool		chain;			/* start a new block after this one */
+	bool		topXidLogged;	/* for a subxact: is top-level XID logged? */
+	struct TransactionStateData *parent;	/* back link to parent */
+
+	UndoRecPtr first_urp[UNDO_PERSISTENCE_LEVELS]; /* First UndoRecPtr create by this transaction */
+	UndoRecPtr latest_urp[UNDO_PERSISTENCE_LEVELS]; /* Last UndoRecPtr created by this transaction */
+	UndoRecPtr latest_urp_xact[UNDO_PERSISTENCE_LEVELS]; /* Last UndoRecPtr created by this transaction including its
+                                                          * parent if any */
+	bool perform_undo;
+	bool subXactLock;	
+} TransactionStateData;
+
+typedef TransactionStateData *TransactionState;
+#endif
 
 /* ----------------
  *		transaction-related XLOG entries
@@ -435,6 +540,12 @@ extern bool IsAbortedTransactionBlockState(void);
 extern TransactionId GetTopTransactionId(void);
 extern TransactionId GetTopTransactionIdIfAny(void);
 extern TransactionId GetCurrentTransactionId(void);
+#ifdef USE_XSTORE
+extern TransactionState GetCurrentTransactionSate(void);
+extern const char *TransStateAsString(TransState state);
+extern void AbortTransaction(void);
+extern bool GetCurrentCommandIdUsed(void);
+#endif
 extern TransactionId GetCurrentTransactionIdIfAny(void);
 extern TransactionId GetStableLatestTransactionId(void);
 extern SubTransactionId GetCurrentSubTransactionId(void);
@@ -526,5 +637,10 @@ extern void ParsePrepareRecord(uint8 info, xl_xact_prepare *xlrec, xl_xact_parse
 extern void EnterParallelMode(void);
 extern void ExitParallelMode(void);
 extern bool IsInParallelMode(void);
+
+#ifdef USE_XSTORE
+extern bool has_current_sub_transaction_lock(void);
+extern void SetCurrentSubTransactionLocked(void);
+#endif
 
 #endif							/* XACT_H */

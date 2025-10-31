@@ -3,6 +3,7 @@
  * toast_internals.c
  *	  Functions for internal use by the TOAST system.
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Copyright (c) 2000-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
@@ -27,7 +28,11 @@
 #include "utils/snapmgr.h"
 
 static bool toastrel_valueid_exists(Relation toastrel, Oid valueid);
+#ifdef USE_XSTORE
+bool toastid_valueid_exists(Oid toastrel, Oid valueid);
+#else
 static bool toastid_valueid_exists(Oid toastrelid, Oid valueid);
+#endif
 
 /* ----------
  * toast_compress_datum -
@@ -505,7 +510,11 @@ toastrel_valueid_exists(Relation toastrel, Oid valueid)
  *	As above, but work from toast rel's OID not an open relation
  * ----------
  */
+#ifdef USE_XSTORE
+bool
+#else
 static bool
+#endif
 toastid_valueid_exists(Oid toastrelid, Oid valueid)
 {
 	bool		result;

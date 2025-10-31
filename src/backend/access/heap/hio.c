@@ -3,6 +3,7 @@
  * hio.c
  *	  POSTGRES heap access method input/output code.
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -84,7 +85,11 @@ RelationPutHeapTuple(Relation relation,
 /*
  * Read in a buffer in mode, using bulk-insert strategy if bistate isn't NULL.
  */
+#ifdef USE_XSTORE
+Buffer
+#else
 static Buffer
+#endif
 ReadBufferBI(Relation relation, BlockNumber targetBlock,
 			 ReadBufferMode mode, BulkInsertState bistate)
 {

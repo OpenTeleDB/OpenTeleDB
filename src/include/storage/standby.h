@@ -4,6 +4,7 @@
  *	  Definitions for hot standby mode.
  *
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -59,6 +60,11 @@ extern void StandbyReleaseLockTree(TransactionId xid,
 								   int nsubxids, TransactionId *subxids);
 extern void StandbyReleaseAllLocks(void);
 extern void StandbyReleaseOldLocks(TransactionId oldxid);
+#ifdef USE_XSTORE
+extern void ResolveRecoveryConflictWithVirtualXIDs(VirtualTransactionId *waitlist,
+									   ProcSignalReason reason, uint32 wait_event_info,
+									   bool report_waiting);
+#endif
 
 #define MinSizeOfXactRunningXacts offsetof(xl_running_xacts, xids)
 

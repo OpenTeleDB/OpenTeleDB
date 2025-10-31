@@ -26,6 +26,7 @@
  *	before ExecutorEnd.  This can be omitted only in case of EXPLAIN,
  *	which should also omit ExecutorRun.
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -59,6 +60,9 @@
 #include "utils/partcache.h"
 #include "utils/rls.h"
 #include "utils/snapmgr.h"
+#ifdef USE_XSTORE
+#include "access/xstore/xstorehook.h"
+#endif
 
 
 /* Hooks for plugins to get control in ExecutorStart/Run/Finish/End */
@@ -2705,11 +2709,28 @@ EvalPlanQualFetchRowMark(EPQState *epqstate, Index rti, TupleTableSlot *slot)
 		}
 		else
 		{
+			#ifdef USE_XSTORE
+			if(RelationIsXstoreTable(erm->relation))
+			{
+				/* ordinary xstore table, fetch the tuple using old snapshot */
+				if (!table_tuple_fetch_row_version(erm->relation,
+												(ItemPointer) DatumGetPointer(datum),
+												epqstate->recheckestate->es_snapshot, slot))
+					elog(ERROR, "failed to fetch tuple for EvalPlanQual recheck");
+			} else {
+				/* ordinary table, fetch the tuple */
+				if (!table_tuple_fetch_row_version(erm->relation,
+												(ItemPointer) DatumGetPointer(datum),
+												SnapshotAny, slot))
+					elog(ERROR, "failed to fetch tuple for EvalPlanQual recheck");
+			}
+			#else
 			/* ordinary table, fetch the tuple */
 			if (!table_tuple_fetch_row_version(erm->relation,
 											   (ItemPointer) DatumGetPointer(datum),
 											   SnapshotAny, slot))
 				elog(ERROR, "failed to fetch tuple for EvalPlanQual recheck");
+			#endif
 			return true;
 		}
 	}

@@ -3,6 +3,7 @@
  * nodeIndexscan.c
  *	  Routines to support indexed scans of relations
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -42,6 +43,9 @@
 #include "utils/datum.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
+#ifdef USE_XSTORE
+#include "access/xstore/xstorehook.h"
+#endif
 
 /*
  * When an ordering operator is used, tuples fetched from the index that
@@ -1334,7 +1338,11 @@ ExecIndexBuildScanKeys(PlanState *planstate, Relation index,
 				 * We have to look up the operator's associated btree support
 				 * function
 				 */
+#ifdef USE_XSTORE
+				if ((index->rd_rel->relam != BTREE_AM_OID && !OidIsXBTree(index->rd_rel->relam)) ||
+#else
 				if (index->rd_rel->relam != BTREE_AM_OID ||
+#endif
 					varattno < 1 || varattno > indnkeyatts)
 					elog(ERROR, "bogus RowCompare index qualification");
 				opfamily = index->rd_opfamily[varattno - 1];

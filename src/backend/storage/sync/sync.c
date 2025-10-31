@@ -3,6 +3,7 @@
  * sync.c
  *	  File synchronization management code.
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -29,6 +30,9 @@
 #include "storage/fd.h"
 #include "storage/latch.h"
 #include "storage/md.h"
+#ifdef USE_XSTORE
+#include "storage/sync.h"
+#endif
 #include "utils/hsearch.h"
 #include "utils/memutils.h"
 
@@ -78,6 +82,7 @@ static CycleCtr checkpoint_cycle_ctr = 0;
 #define FSYNCS_PER_ABSORB		10
 #define UNLINKS_PER_ABSORB		10
 
+#ifndef USE_XSTORE
 /*
  * Function pointers for handling sync and unlink requests.
  */
@@ -89,10 +94,18 @@ typedef struct SyncOps
 										const FileTag *candidate);
 } SyncOps;
 
+#endif
+
+
 /*
  * These indexes must correspond to the values of the SyncRequestHandler enum.
  */
+#ifdef USE_XSTORE
+#define MAX_SYNCSW 255 
+static SyncOps syncsw[MAX_SYNCSW] = {
+#else
 static const SyncOps syncsw[] = {
+#endif
 	/* magnetic disk */
 	[SYNC_HANDLER_MD] = {
 		.sync_syncfiletag = mdsyncfiletag,
@@ -116,6 +129,21 @@ static const SyncOps syncsw[] = {
 		.sync_syncfiletag = multixactmemberssyncfiletag
 	}
 };
+
+#ifdef USE_XSTORE
+static int NSyncHSw = SYNC_HANDLER_NONE;
+
+int RegisterCustomSyncHandler(SyncOps *syncHandler)
+{
+	int pos=NSyncHSw;
+	if(pos>=MAX_SYNCSW) {
+		return -1;
+	}
+	syncsw[pos] = *syncHandler;
+	NSyncHSw++;
+	return pos;
+}
+#endif
 
 /*
  * Initialize data structures for the file sync tracking.

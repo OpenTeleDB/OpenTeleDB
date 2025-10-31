@@ -4,6 +4,7 @@
  *	  This file contains routines to support creation of toast tables
  *
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -32,6 +33,11 @@
 #include "utils/fmgroids.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
+#ifdef USE_XSTORE
+#include "access/xstore/xstorehook.h"
+#include "commands/defrem.h"
+#endif
+
 
 static void CheckAndCreateToastTable(Oid relOid, Datum reloptions,
 									 LOCKMODE lockmode, bool check,
@@ -137,6 +143,11 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
 	Relation	class_rel;
 	Oid			toast_relid;
 	Oid			namespaceid;
+#ifdef USE_XSTORE
+	/* GetXBtreeOid must not be null, if rel is xstore table */
+	Oid         toast_index_access_method = RelationIsXstoreTable(rel) ?
+											GlobalXStoreHook.amHook->GetXBtreeOid() : BTREE_AM_OID;
+#endif
 	char		toast_relname[NAMEDATALEN];
 	char		toast_idxname[NAMEDATALEN];
 	IndexInfo  *indexInfo;
@@ -305,15 +316,24 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
 	indexInfo->ii_Concurrent = false;
 	indexInfo->ii_BrokenHotChain = false;
 	indexInfo->ii_ParallelWorkers = 0;
+#ifdef USE_XSTORE
+	indexInfo->ii_Am = toast_index_access_method;
+#else
 	indexInfo->ii_Am = BTREE_AM_OID;
+#endif
 	indexInfo->ii_AmCache = NULL;
 	indexInfo->ii_Context = CurrentMemoryContext;
 
 	collationIds[0] = InvalidOid;
 	collationIds[1] = InvalidOid;
 
+#ifdef USE_XSTORE
+	opclassIds[0] = GetDefaultOpClass(OIDOID, toast_index_access_method);
+	opclassIds[1] = GetDefaultOpClass(INT4OID, toast_index_access_method);
+#else
 	opclassIds[0] = OID_BTREE_OPS_OID;
 	opclassIds[1] = INT4_BTREE_OPS_OID;
+#endif
 
 	coloptions[0] = 0;
 	coloptions[1] = 0;
@@ -322,7 +342,11 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
 				 InvalidOid, InvalidOid,
 				 indexInfo,
 				 list_make2("chunk_id", "chunk_seq"),
-				 BTREE_AM_OID,
+#ifdef USE_XSTORE
+				 toast_index_access_method,
+#else
+ 				 BTREE_AM_OID,
+#endif
 				 rel->rd_rel->reltablespace,
 				 collationIds, opclassIds, NULL, coloptions, NULL, (Datum) 0,
 				 INDEX_CREATE_IS_PRIMARY, 0, true, true, NULL);

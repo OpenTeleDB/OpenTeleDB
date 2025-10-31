@@ -55,6 +55,7 @@
  *	 HeapTupleSatisfiesAny()
  *		  all tuples are visible
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -77,6 +78,9 @@
 #include "storage/procarray.h"
 #include "utils/builtins.h"
 #include "utils/snapmgr.h"
+#ifdef USE_XSTORE
+#include "utils/elog.h"
+#endif
 
 
 /*
@@ -1782,6 +1786,13 @@ HeapTupleSatisfiesVisibility(HeapTuple htup, Snapshot snapshot, Buffer buffer)
 			return HeapTupleSatisfiesHistoricMVCC(htup, snapshot, buffer);
 		case SNAPSHOT_NON_VACUUMABLE:
 			return HeapTupleSatisfiesNonVacuumable(htup, snapshot, buffer);
+#ifdef USE_XSTORE
+		case SNAPSHOT_NOW:
+		case SNAPSHOT_SELF_TRANSACTION:
+		case SNAPSHOT_NOT_SELF:
+			elog(PANIC, "only xstore table support snapshot now, there must be a bug");
+			break;
+#endif
 	}
 
 	return false;				/* keep compiler quiet */

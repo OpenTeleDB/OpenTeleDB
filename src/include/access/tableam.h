@@ -4,6 +4,7 @@
  *	  POSTGRES table access method definitions.
  *
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -17,6 +18,10 @@
 #ifndef TABLEAM_H
 #define TABLEAM_H
 
+#ifdef USE_XSTORE
+#include "postgres.h"
+#include "executor/tuptable.h"
+#endif
 #include "access/relscan.h"
 #include "access/sdir.h"
 #include "access/xact.h"
@@ -152,6 +157,14 @@ typedef struct TM_FailureData
 	TransactionId xmax;
 	CommandId	cmax;
 	bool		traversed;
+#ifdef USE_XSTORE
+	bool		in_place_updated_or_locked;
+	uint32		epoch;
+	TupleTableSlot* oldslot;
+	Bitmapset*	modifiedIdxAttrs;  /* index modified attr for update */
+	bool 		inplace_update; /* in placed update or not for update*/
+	bool 		should_update_xbtree;
+#endif
 } TM_FailureData;
 
 /*
@@ -267,7 +280,10 @@ typedef struct TM_IndexDeleteOp
 #define TUPLE_LOCK_FLAG_LOCK_UPDATE_IN_PROGRESS	(1 << 0)
 /* Follow update chain and lock latest version of tuple */
 #define TUPLE_LOCK_FLAG_FIND_LAST_VERSION		(1 << 1)
-
+#ifdef USE_XSTORE
+/* lock for update on conflict*/
+#define TUPLE_LOCK_FLAG_UPDATE_ON_CONFLICT		(1 << 2)
+#endif
 
 /* Typedef for callback function for table_index_build_scan */
 typedef void (*IndexBuildCallback) (Relation index,

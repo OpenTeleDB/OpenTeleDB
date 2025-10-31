@@ -8,6 +8,7 @@
  * None of this code is used during normal system operation.
  *
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -24,6 +25,9 @@
 #include "access/xlog_internal.h"
 #include "access/xlogutils.h"
 #include "miscadmin.h"
+#ifdef USE_XSTORE
+#include "storage/bufmgr.h"
+#endif
 #include "storage/fd.h"
 #include "storage/smgr.h"
 #include "utils/hsearch.h"
@@ -375,6 +379,7 @@ XLogReadBufferForRedoExtended(XLogReaderState *record,
 	 * going to initialize it. And vice versa.
 	 */
 	zeromode = (mode == RBM_ZERO_AND_LOCK || mode == RBM_ZERO_AND_CLEANUP_LOCK);
+
 	willinit = (XLogRecGetBlock(record, block_id)->flags & BKPBLOCK_WILL_INIT) != 0;
 	if (willinit && !zeromode)
 		elog(PANIC, "block with WILL_INIT flag in WAL record must be zeroed by redo routine");

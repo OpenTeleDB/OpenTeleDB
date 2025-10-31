@@ -8,6 +8,7 @@
  *
  * This code is released under the terms of the PostgreSQL License.
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -120,6 +121,9 @@ static char *dlpath = PKGLIBDIR;
 static char *user = NULL;
 static _stringlist *extraroles = NULL;
 static char *config_auth_datadir = NULL;
+#ifdef USE_XSTORE
+static bool xstorecheck = false;
+#endif
 
 /* internal variables */
 static const char *progname;
@@ -2091,6 +2095,9 @@ regression_main(int argc, char *argv[],
 		{"config-auth", required_argument, NULL, 24},
 		{"max-concurrent-tests", required_argument, NULL, 25},
 		{"expecteddir", required_argument, NULL, 26},
+#ifdef USE_XSTORE
+		{"xstorecheck", no_argument, NULL, 27},
+#endif
 		{NULL, 0, NULL, 0}
 	};
 
@@ -2219,6 +2226,11 @@ regression_main(int argc, char *argv[],
 			case 26:
 				expecteddir = pg_strdup(optarg);
 				break;
+#ifdef USE_XSTORE	
+			case 27:
+				xstorecheck = true;
+				break;	
+#endif
 			default:
 				/* getopt_long already emitted a complaint */
 				pg_log_error_hint("Try \"%s --help\" for more information.",
@@ -2332,10 +2344,10 @@ regression_main(int argc, char *argv[],
 			note("initializing database system by running initdb");
 
 			appendStringInfo(&cmd,
-							 "\"%s%sinitdb\" -D \"%s/data\" --no-clean --no-sync",
-							 bindir ? bindir : "",
-							 bindir ? "/" : "",
-							 temp_instance);
+							"\"%s%sinitdb\" -D \"%s/data\" --no-clean --no-sync",
+							bindir ? bindir : "",
+							bindir ? "/" : "",
+							temp_instance);
 			if (debug)
 				appendStringInfoString(&cmd, " --debug");
 			if (nolocale)
@@ -2401,6 +2413,13 @@ regression_main(int argc, char *argv[],
 		fputs("log_lock_waits = on\n", pg_conf);
 		fputs("log_temp_files = 128kB\n", pg_conf);
 		fputs("max_prepared_transactions = 2\n", pg_conf);
+#ifdef USE_XSTORE
+		if (xstorecheck)
+		{
+			fputs("shared_preload_libraries = 'xstore.so'\n",pg_conf);
+			fputs("default_table_access_method = 'xstore'\n",pg_conf);
+		}
+#endif
 
 		for (sl = temp_configs; sl != NULL; sl = sl->next)
 		{

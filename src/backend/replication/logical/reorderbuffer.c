@@ -4,6 +4,7 @@
  *	  PostgreSQL logical replay/reorder buffer management
  *
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Copyright (c) 2012-2024, PostgreSQL Global Development Group
  *
  *
@@ -202,13 +203,23 @@ typedef struct ReorderBufferDiskChange
 	(((action) == REORDER_BUFFER_CHANGE_INTERNAL_SPEC_CONFIRM) || \
 	((action) == REORDER_BUFFER_CHANGE_INTERNAL_SPEC_ABORT)) \
 )
+#ifdef USE_XSTORE
+#define IsInsertOrUpdate(action) \
+( \
+	(((action) == REORDER_BUFFER_CHANGE_INSERT) || \
+	((action) == REORDER_BUFFER_CHANGE_UPDATE) || \
+	((action) == REORDER_BUFFER_CHANGE_XINSERT) || \
+	((action) == REORDER_BUFFER_CHANGE_XUPDATE) || \
+	((action) == REORDER_BUFFER_CHANGE_INTERNAL_SPEC_INSERT)) \
+)
+#else
 #define IsInsertOrUpdate(action) \
 ( \
 	(((action) == REORDER_BUFFER_CHANGE_INSERT) || \
 	((action) == REORDER_BUFFER_CHANGE_UPDATE) || \
 	((action) == REORDER_BUFFER_CHANGE_INTERNAL_SPEC_INSERT)) \
 )
-
+#endif
 /*
  * Maximum number of changes kept in memory, per transaction. After that,
  * changes are spooled to disk.
@@ -529,6 +540,11 @@ ReorderBufferReturnChange(ReorderBuffer *rb, ReorderBufferChange *change,
 		case REORDER_BUFFER_CHANGE_INSERT:
 		case REORDER_BUFFER_CHANGE_UPDATE:
 		case REORDER_BUFFER_CHANGE_DELETE:
+#ifdef USE_XSTORE
+		case REORDER_BUFFER_CHANGE_XINSERT:
+		case REORDER_BUFFER_CHANGE_XUPDATE:
+		case REORDER_BUFFER_CHANGE_XDELETE:
+#endif
 		case REORDER_BUFFER_CHANGE_INTERNAL_SPEC_INSERT:
 			if (change->data.tp.newtuple)
 			{
@@ -2240,6 +2256,11 @@ ReorderBufferProcessTXN(ReorderBuffer *rb, ReorderBufferTXN *txn,
 				case REORDER_BUFFER_CHANGE_INSERT:
 				case REORDER_BUFFER_CHANGE_UPDATE:
 				case REORDER_BUFFER_CHANGE_DELETE:
+#ifdef USE_XSTORE
+				case REORDER_BUFFER_CHANGE_XINSERT:
+				case REORDER_BUFFER_CHANGE_XUPDATE:
+				case REORDER_BUFFER_CHANGE_XDELETE:
+#endif				
 					Assert(snapshot_now);
 
 					reloid = RelidByRelfilenumber(change->data.tp.rlocator.spcOid,
@@ -3949,6 +3970,11 @@ ReorderBufferSerializeChange(ReorderBuffer *rb, ReorderBufferTXN *txn,
 		case REORDER_BUFFER_CHANGE_INSERT:
 		case REORDER_BUFFER_CHANGE_UPDATE:
 		case REORDER_BUFFER_CHANGE_DELETE:
+#ifdef USE_XSTORE
+		case REORDER_BUFFER_CHANGE_XINSERT:
+		case REORDER_BUFFER_CHANGE_XUPDATE:
+		case REORDER_BUFFER_CHANGE_XDELETE:
+#endif	
 		case REORDER_BUFFER_CHANGE_INTERNAL_SPEC_INSERT:
 			{
 				char	   *data;
@@ -4309,6 +4335,11 @@ ReorderBufferChangeSize(ReorderBufferChange *change)
 		case REORDER_BUFFER_CHANGE_INSERT:
 		case REORDER_BUFFER_CHANGE_UPDATE:
 		case REORDER_BUFFER_CHANGE_DELETE:
+#ifdef USE_XSTORE
+		case REORDER_BUFFER_CHANGE_XINSERT:
+		case REORDER_BUFFER_CHANGE_XUPDATE:
+		case REORDER_BUFFER_CHANGE_XDELETE:
+#endif
 		case REORDER_BUFFER_CHANGE_INTERNAL_SPEC_INSERT:
 			{
 				HeapTuple	oldtup,
@@ -4334,7 +4365,7 @@ ReorderBufferChangeSize(ReorderBufferChange *change)
 				}
 
 				break;
-			}
+			}		
 		case REORDER_BUFFER_CHANGE_MESSAGE:
 			{
 				Size		prefix_size = strlen(change->data.msg.prefix) + 1;
@@ -4549,6 +4580,11 @@ ReorderBufferRestoreChange(ReorderBuffer *rb, ReorderBufferTXN *txn,
 		case REORDER_BUFFER_CHANGE_INSERT:
 		case REORDER_BUFFER_CHANGE_UPDATE:
 		case REORDER_BUFFER_CHANGE_DELETE:
+#ifdef USE_XSTORE
+		case REORDER_BUFFER_CHANGE_XINSERT:
+		case REORDER_BUFFER_CHANGE_XUPDATE:
+		case REORDER_BUFFER_CHANGE_XDELETE:
+#endif			
 		case REORDER_BUFFER_CHANGE_INTERNAL_SPEC_INSERT:
 			if (change->data.tp.oldtuple)
 			{

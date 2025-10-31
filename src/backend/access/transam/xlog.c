@@ -28,6 +28,7 @@
  * the current system state, and for starting/stopping backups.
  *
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -62,6 +63,9 @@
 #include "access/xlogreader.h"
 #include "access/xlogrecovery.h"
 #include "access/xlogutils.h"
+#ifdef USE_XSTORE
+#include "access/xstore/xstorehook.h"
+#endif
 #include "backup/basebackup.h"
 #include "catalog/catversion.h"
 #include "catalog/pg_control.h"
@@ -5521,6 +5525,12 @@ StartupXLOG(void)
 	 */
 	InitWalRecovery(ControlFile, &wasShutdown,
 					&haveBackupLabel, &haveTblspcMap);
+
+#ifdef USE_XSTORE
+    if (GlobalXStoreHook.xmultiHook->InitXMultiFiles)
+		GlobalXStoreHook.xmultiHook->InitXMultiFiles();
+#endif
+
 	checkPoint = ControlFile->checkPointCopy;
 
 	/* initialize shared memory variables from the checkpoint record */
@@ -5644,6 +5654,10 @@ StartupXLOG(void)
 	RedoRecPtr = XLogCtl->RedoRecPtr = XLogCtl->Insert.RedoRecPtr = checkPoint.redo;
 	doPageWrites = lastFullPageWrites;
 
+#ifdef USE_XSTORE
+	if (GlobalXStoreHook.transHook->RecoveryMeta)
+		GlobalXStoreHook.transHook->RecoveryMeta();
+#endif
 	/* REDO */
 	if (InRecovery)
 	{
@@ -6076,6 +6090,10 @@ StartupXLOG(void)
 	 */
 	TrimCLOG();
 	TrimMultiXact();
+#ifdef USE_XSTORE
+	if (GlobalXStoreHook.xmultiHook->TrimXMultiXact)
+		GlobalXStoreHook.xmultiHook->TrimXMultiXact();
+#endif
 
 	/*
 	 * Reload shared-memory state for prepared transactions.  This needs to
@@ -6874,6 +6892,10 @@ CreateCheckPoint(int flags)
 	int			nvxids;
 	int			oldXLogAllowed = 0;
 	XLogRecPtr	slotsMinReqLSN;
+#ifdef USE_XSTORE
+	CheckPointExt	checkPointExt;
+	int         checkPointLen = 0;
+#endif
 
 	/*
 	 * An end-of-recovery checkpoint is really a shutdown checkpoint, just
@@ -7092,6 +7114,10 @@ CreateCheckPoint(int flags)
 							 &checkPoint.oldestMulti,
 							 &checkPoint.oldestMultiDB);
 
+#ifdef USE_XSTORE
+	if (GlobalXStoreHook.xmultiHook->XMultiXactGetCheckptXMulti)
+		GlobalXStoreHook.xmultiHook->XMultiXactGetCheckptXMulti(&checkPointExt.xmulti_info.nextXMulti, &checkPointExt.xmulti_info.nextXMultiOffset);
+#endif
 	/*
 	 * Having constructed the checkpoint record, ensure all shmem disk buffers
 	 * and commit-log buffers are flushed to disk.
@@ -7194,7 +7220,30 @@ CreateCheckPoint(int flags)
 	 * Now insert the checkpoint record into XLOG.
 	 */
 	XLogBeginInsert();
+#ifdef USE_XSTORE
+	checkPointExt.ori_checkpoint = checkPoint;
+	checkPointExt.ext_flags = 0;
+	checkPointLen = CHECKPOINTEXT_BASE_LEN;
+	if(GlobalXStoreHook.transHook->GetGlobalFrozenXid)
+	{
+		checkPointExt.ext_flags |= CP_EXT_HAS_UNDO;
+		checkPointExt.undo_info.globalFrozenXid = GlobalXStoreHook.transHook->GetGlobalFrozenXid();
+		checkPointExt.undo_info.globalRecycleXid = GlobalXStoreHook.transHook->GetGlobalRecycleXid();
+		checkPointLen += sizeof(CheckPointUndoInfo);
+		elog(LOG, "checkpoint undoinfo globalFrozenXid: %lu globalRecycleXid: %lu checklen: %d",
+			 checkPointExt.undo_info.globalFrozenXid.value, checkPointExt.undo_info.globalRecycleXid.value, checkPointLen);
+	}
+	if(GlobalXStoreHook.xmultiHook->XMultiXactGetCheckptXMulti)
+	{
+		checkPointExt.ext_flags |= CP_EXT_HAS_XMULTI;
+		checkPointLen += sizeof(CheckPointXMultiInfo);
+		elog(LOG, "checkpoint xmultiinfo nextXMulti: %lu nextXMultiOffset: %lu  checklen: %d",
+			 checkPointExt.xmulti_info.nextXMulti.value, checkPointExt.xmulti_info.nextXMultiOffset, checkPointLen);
+	}
+	XLogRegisterData((char *) (&checkPointExt), checkPointLen);
+#else
 	XLogRegisterData((char *) (&checkPoint), sizeof(checkPoint));
+#endif
 	recptr = XLogInsert(RM_XLOG_ID,
 						shutdown ? XLOG_CHECKPOINT_SHUTDOWN :
 						XLOG_CHECKPOINT_ONLINE);
@@ -7516,6 +7565,10 @@ CheckPointGuts(XLogRecPtr checkPointRedo, int flags)
 	CheckPointCommitTs();
 	CheckPointSUBTRANS();
 	CheckPointMultiXact();
+#ifdef USE_XSTORE
+	if (GlobalXStoreHook.xmultiHook->CheckPointXMultiXact)
+		GlobalXStoreHook.xmultiHook->CheckPointXMultiXact();
+#endif
 	CheckPointPredicate();
 	CheckPointBuffers(flags);
 
@@ -7528,6 +7581,11 @@ CheckPointGuts(XLogRecPtr checkPointRedo, int flags)
 
 	/* We deliberately delay 2PC checkpointing as long as possible */
 	CheckPointTwoPhase(checkPointRedo);
+
+#ifdef USE_XSTORE
+	if (GlobalXStoreHook.transHook->CheckPoint)
+		GlobalXStoreHook.transHook->CheckPoint(checkPointRedo);
+#endif
 }
 
 /*
@@ -8282,7 +8340,31 @@ xlog_redo(XLogReaderState *record)
 		CheckPoint	checkPoint;
 		TimeLineID	replayTLI;
 
+		#ifdef USE_XSTORE
+		CheckPointExt checkPointExt;
+		checkPointExt.undo_info.globalFrozenXid = FirstNormalFullTransactionId;
+		checkPointExt.undo_info.globalRecycleXid = FirstNormalFullTransactionId;
+		checkPointExt.xmulti_info.nextXMulti = FullTransactionIdFromU64(1);
+		checkPointExt.xmulti_info.nextXMultiOffset = 0;
+#endif
+
 		memcpy(&checkPoint, XLogRecGetData(record), sizeof(CheckPoint));
+#ifdef USE_XSTORE
+		if (XLogRecGetDataLen(record) >= CHECKPOINTEXT_BASE_LEN) {
+			char* ext_base= (char *)XLogRecGetData(record);
+			memcpy(&checkPointExt, XLogRecGetData(record), CHECKPOINTEXT_BASE_LEN);
+			ext_base += CHECKPOINTEXT_BASE_LEN;
+			if(checkPointExt.ext_flags & CP_EXT_HAS_UNDO) {
+				memcpy(&checkPointExt.undo_info, ext_base, sizeof(CheckPointUndoInfo));
+				ext_base += sizeof(CheckPointUndoInfo);
+			}
+			if(checkPointExt.ext_flags & CP_EXT_HAS_XMULTI)
+			{
+				memcpy(&checkPointExt.xmulti_info, ext_base, sizeof(CheckPointXMultiInfo));
+				ext_base += sizeof(CheckPointXMultiInfo);
+			}
+		}
+#endif
 		/* In a SHUTDOWN checkpoint, believe the counters exactly */
 		LWLockAcquire(XidGenLock, LW_EXCLUSIVE);
 		TransamVariables->nextXid = checkPoint.nextXid;
@@ -8293,7 +8375,16 @@ xlog_redo(XLogReaderState *record)
 		LWLockRelease(OidGenLock);
 		MultiXactSetNextMXact(checkPoint.nextMulti,
 							  checkPoint.nextMultiOffset);
-
+#ifdef USE_XSTORE
+		if (GlobalXStoreHook.xmultiHook->XMultiXactSetNextXMXact)
+			GlobalXStoreHook.xmultiHook->XMultiXactSetNextXMXact(checkPointExt.xmulti_info.nextXMulti,
+																 checkPointExt.xmulti_info.nextXMultiOffset);
+		if(GlobalXStoreHook.transHook->SetGlobalFrozenXid)
+		{
+			GlobalXStoreHook.transHook->SetGlobalFrozenXid(checkPointExt.undo_info.globalFrozenXid);
+			GlobalXStoreHook.transHook->SetGlobalRecycleXid(checkPointExt.undo_info.globalRecycleXid);
+		}
+#endif
 		MultiXactAdvanceOldest(checkPoint.oldestMulti,
 							   checkPoint.oldestMultiDB);
 
@@ -8379,8 +8470,30 @@ xlog_redo(XLogReaderState *record)
 	{
 		CheckPoint	checkPoint;
 		TimeLineID	replayTLI;
-
+#ifdef USE_XSTORE
+		CheckPointExt checkPointExt;
+		checkPointExt.undo_info.globalFrozenXid = FirstNormalFullTransactionId;
+		checkPointExt.undo_info.globalRecycleXid = FirstNormalFullTransactionId;
+		checkPointExt.xmulti_info.nextXMulti = FullTransactionIdFromU64(1);
+		checkPointExt.xmulti_info.nextXMultiOffset = 0;
+#endif
 		memcpy(&checkPoint, XLogRecGetData(record), sizeof(CheckPoint));
+#ifdef USE_XSTORE
+		if (XLogRecGetDataLen(record) >= CHECKPOINTEXT_BASE_LEN) {
+			char* ext_base= (char *)XLogRecGetData(record);
+			memcpy(&checkPointExt, XLogRecGetData(record), CHECKPOINTEXT_BASE_LEN);
+			ext_base += CHECKPOINTEXT_BASE_LEN;
+			if(checkPointExt.ext_flags & CP_EXT_HAS_UNDO) {
+				memcpy(&checkPointExt.undo_info, ext_base, sizeof(CheckPointUndoInfo));
+				ext_base += sizeof(CheckPointUndoInfo);
+			}
+			if(checkPointExt.ext_flags & CP_EXT_HAS_XMULTI)
+			{
+				memcpy(&checkPointExt.xmulti_info, ext_base, sizeof(CheckPointXMultiInfo));
+				ext_base += sizeof(CheckPointXMultiInfo);
+			}
+		}
+#endif
 		/* In an ONLINE checkpoint, treat the XID counter as a minimum */
 		LWLockAcquire(XidGenLock, LW_EXCLUSIVE);
 		if (FullTransactionIdPrecedes(TransamVariables->nextXid,
@@ -8404,6 +8517,16 @@ xlog_redo(XLogReaderState *record)
 		MultiXactAdvanceNextMXact(checkPoint.nextMulti,
 								  checkPoint.nextMultiOffset);
 
+#ifdef USE_XSTORE
+		if (GlobalXStoreHook.xmultiHook->XMultiXactAdvanceNextXMXact)
+			GlobalXStoreHook.xmultiHook->XMultiXactAdvanceNextXMXact(checkPointExt.xmulti_info.nextXMulti,
+																	checkPointExt.xmulti_info.nextXMultiOffset);
+		if(GlobalXStoreHook.transHook->SetGlobalFrozenXid)
+		{
+			GlobalXStoreHook.transHook->SetGlobalFrozenXid(checkPointExt.undo_info.globalFrozenXid);
+			GlobalXStoreHook.transHook->SetGlobalRecycleXid(checkPointExt.undo_info.globalRecycleXid);
+		}
+#endif
 		/*
 		 * NB: This may perform multixact truncation when replaying WAL
 		 * generated by an older primary.

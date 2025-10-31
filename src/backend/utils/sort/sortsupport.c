@@ -4,6 +4,7 @@
  *	  Support routines for accelerated sorting.
  *
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -22,6 +23,9 @@
 #include "utils/rel.h"
 #include "utils/sortsupport.h"
 
+#ifdef USE_XSTORE
+#include "access/xstore/xstorehook.h"
+#endif
 
 /* Info needed to use an old-style comparison function as a sort comparator */
 typedef struct
@@ -166,7 +170,11 @@ PrepareSortSupportFromIndexRel(Relation indexRel, int16 strategy,
 
 	Assert(ssup->comparator == NULL);
 
+#ifdef USE_XSTORE
+	if (indexRel->rd_rel->relam != BTREE_AM_OID && !OidIsXBTree(indexRel->rd_rel->relam))
+#else
 	if (indexRel->rd_rel->relam != BTREE_AM_OID)
+#endif
 		elog(ERROR, "unexpected non-btree AM: %u", indexRel->rd_rel->relam);
 	if (strategy != BTGreaterStrategyNumber &&
 		strategy != BTLessStrategyNumber)

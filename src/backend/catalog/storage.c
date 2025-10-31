@@ -3,6 +3,7 @@
  * storage.c
  *	  code to create and destroy physical storage for relations
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -19,6 +20,9 @@
 
 #include "postgres.h"
 
+#ifdef USE_XSTORE
+#include "access/xstore/xstorehook.h"
+#endif
 #include "access/visibilitymap.h"
 #include "access/xact.h"
 #include "access/xlog.h"
@@ -207,6 +211,14 @@ RelationDropStorage(Relation rel)
 {
 	PendingRelDelete *pending;
 
+	#ifdef USE_XSTORE
+	if (RelationIsXstoreTable(rel))
+	{
+		if (GlobalXStoreHook.amHook->PgStatRemove)
+			GlobalXStoreHook.amHook->PgStatRemove(rel);
+
+	}
+	#endif
 	/* Add the relation to the list of stuff to delete at commit */
 	pending = (PendingRelDelete *)
 		MemoryContextAlloc(TopMemoryContext, sizeof(PendingRelDelete));

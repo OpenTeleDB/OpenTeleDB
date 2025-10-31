@@ -4,6 +4,8 @@
  *	src/backend/utils/adt/network.c
  *
  *	Jon Postel RIP 16 Oct 1998
+ * 
+ *  Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  */
 
 #include "postgres.h"
@@ -30,6 +32,9 @@
 #include "utils/inet.h"
 #include "utils/lsyscache.h"
 #include "utils/sortsupport.h"
+#ifdef USE_XSTORE
+#include "access/xstore/xstorehook.h"
+#endif
 
 
 /*
@@ -1107,8 +1112,22 @@ match_network_subset(Node *leftop,
 	 * do the wrong thing if someone were to make a reverse-sort opfamily with
 	 * the same operators.
 	 */
+#ifdef USE_XSTORE
+	if (GlobalXStoreHook.amHook->SameOpfamilyForBtreeAndXBtree == NULL)
+	{
+		if (opfamily != NETWORK_BTREE_FAM_OID)
+			return NIL;
+	}
+	else
+	{
+		if (opfamily != NETWORK_BTREE_FAM_OID && 
+			!GlobalXStoreHook.amHook->SameOpfamilyForBtreeAndXBtree(NETWORK_BTREE_FAM_OID, opfamily))
+			return NIL;
+	}
+#else
 	if (opfamily != NETWORK_BTREE_FAM_OID)
 		return NIL;
+#endif
 
 	/*
 	 * create clause "key >= network_scan_first( rightopval )", or ">" if the

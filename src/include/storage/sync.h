@@ -3,6 +3,7 @@
  * sync.h
  *	  File synchronization management code.
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -53,6 +54,9 @@ typedef struct FileTag
 	int16		forknum;		/* ForkNumber, saving space */
 	RelFileLocator rlocator;
 	uint64		segno;
+#ifdef USE_XSTORE
+	int64		full_segno;
+#endif
 } FileTag;
 
 extern void InitSync(void);
@@ -62,5 +66,20 @@ extern void ProcessSyncRequests(void);
 extern void RememberSyncRequest(const FileTag *ftag, SyncRequestType type);
 extern bool RegisterSyncRequest(const FileTag *ftag, SyncRequestType type,
 								bool retryOnError);
+
+#ifdef USE_XSTORE
+/*
+ * Function pointers for handling sync and unlink requests.
+ */
+typedef struct SyncOps
+{
+	int			(*sync_syncfiletag) (const FileTag *ftag, char *path);
+	int			(*sync_unlinkfiletag) (const FileTag *ftag, char *path);
+	bool		(*sync_filetagmatches) (const FileTag *ftag,
+										const FileTag *candidate);
+} SyncOps;
+
+extern int RegisterCustomSyncHandler(SyncOps *syncHandler);
+#endif
 
 #endif							/* SYNC_H */

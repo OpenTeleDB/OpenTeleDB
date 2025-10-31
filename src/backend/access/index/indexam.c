@@ -3,6 +3,7 @@
  * indexam.c
  *	  general index access method routines
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -57,7 +58,11 @@
 #include "utils/ruleutils.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
-
+#ifdef USE_XSTORE
+#include "executor/executor.h"
+#include "access/xstore/xstorehook.h"
+#include "access/nbtree.h"
+#endif
 
 /* ----------------------------------------------------------------
  *					macros used in index_ routines
@@ -246,6 +251,19 @@ index_insert_cleanup(Relation indexRelation,
 	if (indexRelation->rd_indam->aminsertcleanup)
 		indexRelation->rd_indam->aminsertcleanup(indexRelation, indexInfo);
 }
+
+#ifdef USE_XSTORE
+/* ----------------
+ *		delete_insert - delete an index tuple from a relation
+ * ----------------
+ */
+bool 
+index_delete(Relation indexRelation, Datum *values, bool *isnull, ItemPointer heap_t_ctid, bool is_dead)
+{
+
+	return indexRelation->rd_indam->amdelete(indexRelation, values, isnull, heap_t_ctid, is_dead);
+}
+#endif
 
 /*
  * index_beginscan - start a scan of an index with amgettuple

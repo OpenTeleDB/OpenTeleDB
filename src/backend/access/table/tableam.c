@@ -3,6 +3,7 @@
  * tableam.c
  *		Table access method routines too big to be inline functions.
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -293,6 +294,9 @@ simple_table_tuple_delete(Relation rel, ItemPointer tid, Snapshot snapshot)
 	TM_Result	result;
 	TM_FailureData tmfd;
 
+#ifdef USE_XSTORE
+	tmfd.oldslot = NULL;
+#endif
 	result = table_tuple_delete(rel, tid,
 								GetCurrentCommandId(true),
 								snapshot, InvalidSnapshot,
@@ -341,6 +345,12 @@ simple_table_tuple_update(Relation rel, ItemPointer otid,
 	TM_Result	result;
 	TM_FailureData tmfd;
 	LockTupleMode lockmode;
+
+#ifdef USE_XSTORE
+	tmfd.oldslot = NULL;
+	tmfd.should_update_xbtree = false;
+	tmfd.modifiedIdxAttrs = NULL;
+#endif
 
 	result = table_tuple_update(rel, otid, slot,
 								GetCurrentCommandId(true),

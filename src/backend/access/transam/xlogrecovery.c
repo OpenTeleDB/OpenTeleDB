@@ -14,6 +14,7 @@
  * for interrogating recovery state and controlling the recovery process.
  *
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -40,6 +41,10 @@
 #include "access/xlogreader.h"
 #include "access/xlogrecovery.h"
 #include "access/xlogutils.h"
+#ifdef USE_XSTORE
+#include "access/xlog.h"
+#include "access/xstore/xstorehook.h"
+#endif
 #include "backup/basebackup.h"
 #include "catalog/pg_control.h"
 #include "commands/tablespace.h"
@@ -67,6 +72,11 @@
 /* Unsupported old recovery command file names (relative to $PGDATA) */
 #define RECOVERY_COMMAND_FILE	"recovery.conf"
 #define RECOVERY_COMMAND_DONE	"recovery.done"
+
+#ifdef USE_XSTORE
+#define CHECKPOINT_RECORD_LEN (SizeOfXLogRecord + SizeOfXLogRecordDataHeaderShort + sizeof(CheckPoint))
+#define CHECKPOINTEXT_RECORD_LEN (SizeOfXLogRecord + SizeOfXLogRecordDataHeaderShort +  offsetof(CheckPointExt, undo_info))
+#endif
 
 /*
  * GUC support
@@ -521,6 +531,13 @@ InitWalRecovery(ControlFileData *ControlFile, bool *wasShutdown_ptr,
 	bool		haveBackupLabel = false;
 	CheckPoint	checkPoint;
 	bool		backupFromStandby = false;
+#ifdef USE_XSTORE
+	CheckPointExt checkPointExt;
+	checkPointExt.undo_info.globalFrozenXid = FirstNormalFullTransactionId;
+	checkPointExt.undo_info.globalRecycleXid = FirstNormalFullTransactionId;
+	checkPointExt.xmulti_info.nextXMulti =  FullTransactionIdFromU64(1);
+	checkPointExt.xmulti_info.nextXMultiOffset = 0;
+#endif
 
 	dbstate_at_startup = ControlFile->state;
 
@@ -628,6 +645,22 @@ InitWalRecovery(ControlFileData *ControlFile, bool *wasShutdown_ptr,
 		if (record != NULL)
 		{
 			memcpy(&checkPoint, XLogRecGetData(xlogreader), sizeof(CheckPoint));
+#ifdef USE_XSTORE
+			if (record->xl_tot_len >= CHECKPOINTEXT_RECORD_LEN) {
+				char* ext_base= (char *)XLogRecGetData(xlogreader);
+				memcpy(&checkPointExt, XLogRecGetData(xlogreader), CHECKPOINTEXT_BASE_LEN);
+				ext_base += CHECKPOINTEXT_BASE_LEN;
+				if(checkPointExt.ext_flags & CP_EXT_HAS_UNDO) {
+					memcpy(&checkPointExt.undo_info, ext_base, sizeof(CheckPointUndoInfo));
+					ext_base += sizeof(CheckPointUndoInfo);
+				}
+				if(checkPointExt.ext_flags & CP_EXT_HAS_XMULTI)
+				{
+					memcpy(&checkPointExt.xmulti_info, ext_base, sizeof(CheckPointXMultiInfo));
+					ext_base += sizeof(CheckPointXMultiInfo);
+				}
+			}
+#endif
 			wasShutdown = ((record->xl_info & ~XLR_INFO_MASK) == XLOG_CHECKPOINT_SHUTDOWN);
 			ereport(DEBUG1,
 					(errmsg_internal("checkpoint record is at %X/%X",
@@ -782,6 +815,22 @@ InitWalRecovery(ControlFileData *ControlFile, bool *wasShutdown_ptr,
 			ereport(DEBUG1,
 					(errmsg_internal("checkpoint record is at %X/%X",
 									 LSN_FORMAT_ARGS(CheckPointLoc))));
+#ifdef USE_XSTORE
+			if (record->xl_tot_len >= CHECKPOINTEXT_RECORD_LEN) {
+				char* ext_base= (char *)XLogRecGetData(xlogreader);
+				memcpy(&checkPointExt, XLogRecGetData(xlogreader), CHECKPOINTEXT_BASE_LEN);
+				ext_base = ext_base + CHECKPOINTEXT_BASE_LEN;
+				if(checkPointExt.ext_flags & CP_EXT_HAS_UNDO) {
+					memcpy(&checkPointExt.undo_info, ext_base, sizeof(CheckPointUndoInfo));
+					ext_base = ext_base + sizeof(CheckPointUndoInfo);
+				}
+				if(checkPointExt.ext_flags & CP_EXT_HAS_XMULTI)
+				{
+					memcpy(&checkPointExt.xmulti_info, ext_base, sizeof(CheckPointXMultiInfo));
+					ext_base = ext_base + sizeof(CheckPointXMultiInfo);
+				}
+			}
+#endif
 		}
 		else
 		{
@@ -798,6 +847,37 @@ InitWalRecovery(ControlFileData *ControlFile, bool *wasShutdown_ptr,
 		memcpy(&checkPoint, XLogRecGetData(xlogreader), sizeof(CheckPoint));
 		wasShutdown = ((record->xl_info & ~XLR_INFO_MASK) == XLOG_CHECKPOINT_SHUTDOWN);
 	}
+#ifdef USE_XSTORE
+	if(GlobalXStoreHook.transHook->SetGlobalFrozenXid)
+	{
+		if(!FullTransactionIdIsNormal(checkPointExt.undo_info.globalFrozenXid))
+			checkPointExt.undo_info.globalFrozenXid = FirstNormalFullTransactionId;
+
+		if(!FullTransactionIdIsNormal(checkPointExt.undo_info.globalRecycleXid))
+			checkPointExt.undo_info.globalRecycleXid = FirstNormalFullTransactionId;
+
+		GlobalXStoreHook.transHook->SetGlobalFrozenXid(checkPointExt.undo_info.globalFrozenXid);
+		GlobalXStoreHook.transHook->SetGlobalRecycleXid(checkPointExt.undo_info.globalRecycleXid);
+		elog(LOG, "checkpoint undoinfo recovery  globalFrozenXid: %lu globalRecycleXid: %lu",
+			 checkPointExt.undo_info.globalFrozenXid.value, checkPointExt.undo_info.globalRecycleXid.value);
+	}
+
+	if (GlobalXStoreHook.xmultiHook->XMultiXactSetNextXMXact)
+	{
+		GlobalXStoreHook.xmultiHook->XMultiXactSetNextXMXact(checkPointExt.xmulti_info.nextXMulti, checkPointExt.xmulti_info.nextXMultiOffset);
+		elog(LOG, "checkpoint xmulti_info recovery nextXMulti: %lu,nextXMultiOffset: %lu ",
+			 checkPointExt.xmulti_info.nextXMulti.value,  checkPointExt.xmulti_info.nextXMultiOffset);
+	}
+
+	if (GlobalXStoreHook.transHook->SetHotStandbyFrozenXid)
+	{
+		if(!FullTransactionIdIsNormal(checkPointExt.undo_info.globalFrozenXid))
+			checkPointExt.undo_info.globalFrozenXid = FirstNormalFullTransactionId;
+
+		GlobalXStoreHook.transHook->SetHotStandbyFrozenXid(checkPointExt.undo_info.globalFrozenXid);
+		elog(LOG, "checkpoint undoinfo recovery  HotStandbyFrozenXid: %lu", checkPointExt.undo_info.globalFrozenXid.value);
+	}
+#endif
 
 	if (ArchiveRecoveryRequested)
 	{
@@ -4085,7 +4165,11 @@ ReadCheckpointRecord(XLogPrefetcher *xlogprefetcher, XLogRecPtr RecPtr,
 				(errmsg("invalid xl_info in checkpoint record")));
 		return NULL;
 	}
+#ifdef USE_XSTORE
+	if (record->xl_tot_len != CHECKPOINT_RECORD_LEN && record->xl_tot_len < CHECKPOINTEXT_RECORD_LEN )
+#else
 	if (record->xl_tot_len != SizeOfXLogRecord + SizeOfXLogRecordDataHeaderShort + sizeof(CheckPoint))
+#endif
 	{
 		ereport(LOG,
 				(errmsg("invalid length of checkpoint record")));

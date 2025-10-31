@@ -4,6 +4,7 @@
  *
  *	  Routines for opclass (and opfamily) manipulation commands
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -47,6 +48,9 @@
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
+#ifdef USE_XSTORE
+#include "access/xstore/xstorehook.h"
+#endif
 
 static void AlterOpFamilyAdd(AlterOpFamilyStmt *stmt,
 							 Oid amoid, Oid opfamilyoid,
@@ -1249,7 +1253,11 @@ assignProcTypes(OpFamilyMember *member, Oid amoid, Oid typeoid,
 	 * returning int4, while proc 2 must be a 2-arg proc returning int8.
 	 * Otherwise we don't know.
 	 */
+#ifdef USE_XSTORE
+	else if (amoid == BTREE_AM_OID || OidIsXBTree(amoid))
+#else
 	else if (amoid == BTREE_AM_OID)
+#endif
 	{
 		if (member->number == BTORDER_PROC)
 		{

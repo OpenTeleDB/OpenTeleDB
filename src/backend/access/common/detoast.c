@@ -3,6 +3,7 @@
  * detoast.c
  *	  Retrieve compressed or external variable size attributes.
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Copyright (c) 2000-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
@@ -22,7 +23,12 @@
 #include "utils/expandeddatum.h"
 #include "utils/rel.h"
 
+#ifdef USE_XSTORE
+struct varlena *toast_fetch_datum(struct varlena *attr);
+#else
 static struct varlena *toast_fetch_datum(struct varlena *attr);
+#endif
+
 static struct varlena *toast_fetch_datum_slice(struct varlena *attr,
 											   int32 sliceoffset,
 											   int32 slicelength);
@@ -339,7 +345,11 @@ detoast_attr_slice(struct varlena *attr,
  *	in the toast relation
  * ----------
  */
+#ifdef USE_XSTORE
+struct varlena *
+#else 
 static struct varlena *
+#endif
 toast_fetch_datum(struct varlena *attr)
 {
 	Relation	toastrel;

@@ -7,6 +7,7 @@
  *	AccessExclusiveLocks and starting snapshots for Hot Standby mode.
  *	Plus conflict recovery processing.
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -69,10 +70,12 @@ static volatile sig_atomic_t got_standby_deadlock_timeout = false;
 static volatile sig_atomic_t got_standby_delay_timeout = false;
 static volatile sig_atomic_t got_standby_lock_timeout = false;
 
+#ifndef USE_XSTORE
 static void ResolveRecoveryConflictWithVirtualXIDs(VirtualTransactionId *waitlist,
 												   ProcSignalReason reason,
 												   uint32 wait_event_info,
 												   bool report_waiting);
+#endif
 static void SendRecoveryConflictWithBufferPin(ProcSignalReason reason);
 static XLogRecPtr LogCurrentRunningXacts(RunningTransactions CurrRunningXacts);
 static void LogAccessExclusiveLocks(int nlocks, xl_standby_lock *locks);
@@ -355,7 +358,11 @@ LogRecoveryConflict(ProcSignalReason reason, TimestampTz wait_start,
  * false. Otherwise, both the caller and this function report the same
  * thing unexpectedly.
  */
+#ifdef USE_XSTORE
+void
+#else
 static void
+#endif
 ResolveRecoveryConflictWithVirtualXIDs(VirtualTransactionId *waitlist,
 									   ProcSignalReason reason, uint32 wait_event_info,
 									   bool report_waiting)

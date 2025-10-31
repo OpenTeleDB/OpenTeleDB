@@ -29,6 +29,7 @@
  * and a non-lossy page.
  *
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Copyright (c) 2003-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
@@ -54,7 +55,12 @@
  * the per-page bitmaps variable size.  We just legislate that the size
  * is this:
  */
+#ifdef USE_XSTORE
+// MaxXHeapTuplesPerPage is 452 in teledb, so 1000 is big enough
+#define MAX_TUPLES_PER_PAGE  ((MaxHeapTuplesPerPage) > (1000) ? (MaxHeapTuplesPerPage) : (1000))
+#else
 #define MAX_TUPLES_PER_PAGE  MaxHeapTuplesPerPage
+#endif
 
 /*
  * When we have to switch over to lossy storage, we use a data structure

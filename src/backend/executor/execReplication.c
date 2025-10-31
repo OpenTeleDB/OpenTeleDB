@@ -3,6 +3,7 @@
  * execReplication.c
  *	  miscellaneous executor routines for logical replication
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -31,6 +32,9 @@
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
 #include "utils/typcache.h"
+#ifdef USE_XSTORE
+#include "access/xstore/xstorehook.h"
+#endif
 
 
 static bool tuples_equal(TupleTableSlot *slot1, TupleTableSlot *slot2,
@@ -581,6 +585,7 @@ ExecSimpleRelationUpdate(ResultRelInfo *resultRelInfo,
 	{
 		List	   *recheckIndexes = NIL;
 		TU_UpdateIndexes update_indexes;
+		TM_FailureData tmfd;
 
 		/* Compute stored generated columns */
 		if (rel->rd_att->constr &&
@@ -594,15 +599,57 @@ ExecSimpleRelationUpdate(ResultRelInfo *resultRelInfo,
 		if (rel->rd_rel->relispartition)
 			ExecPartitionCheck(resultRelInfo, slot, estate, true);
 
+#ifdef USE_XSTORE
+		tmfd.should_update_xbtree = false;
+		tmfd.oldslot = NULL;
+		tmfd.modifiedIdxAttrs = NULL;
+		if (RelationIsXstoreTable(rel))
+		{
+			simple_xtuple_update(resultRelInfo, estate, rel,
+								 tid, slot, &update_indexes,
+								 &tmfd);
+		}
+		else
+		{
+#endif
 		simple_table_tuple_update(rel, tid, slot, estate->es_snapshot,
 								  &update_indexes);
+#ifdef USE_XSTORE
+		}
+#endif
 
 		if (resultRelInfo->ri_NumIndices > 0 && (update_indexes != TU_None))
+#ifdef USE_XSTORE
+		{
+			if (tmfd.should_update_xbtree)
+			{
+				ExecIndexTuplesState exec_index_tuples_state;
+				exec_index_tuples_state.estate = estate;
+				exec_index_tuples_state.conflict = NULL;
+				Assert(GlobalXStoreHook.amHook->ExecDeleteIndexTuplesGuts != NULL);
+				Assert(GlobalXStoreHook.amHook->ExecInsertIndexTuplesGuts != NULL);
+				GlobalXStoreHook.amHook->ExecDeleteIndexTuplesGuts(resultRelInfo, slot, &exec_index_tuples_state,
+																   tmfd.modifiedIdxAttrs, tmfd.inplace_update);
+				recheckIndexes = GlobalXStoreHook.amHook->ExecInsertIndexTuplesGuts(resultRelInfo, slot, &exec_index_tuples_state,
+													false, false, NULL, NIL,
+													tmfd.modifiedIdxAttrs, tmfd.inplace_update);
+				bms_free(tmfd.modifiedIdxAttrs);
+				tmfd.modifiedIdxAttrs = NULL;
+				tmfd.should_update_xbtree = false;
+			}
+			else
+			{
+				recheckIndexes = ExecInsertIndexTuples(resultRelInfo,
+												   slot, estate, true, false,
+												   NULL, NIL, (update_indexes == TU_Summarizing));
+			}
+		}
+#else
 			recheckIndexes = ExecInsertIndexTuples(resultRelInfo,
 												   slot, estate, true, false,
 												   NULL, NIL,
 												   (update_indexes == TU_Summarizing));
-
+#endif
 		/* AFTER ROW UPDATE Triggers */
 		ExecARUpdateTriggers(estate, resultRelInfo,
 							 NULL, NULL,
@@ -640,9 +687,19 @@ ExecSimpleRelationDelete(ResultRelInfo *resultRelInfo,
 
 	if (!skip_tuple)
 	{
+#ifdef USE_XSTORE
+		if (GetTTSOpsXHeapTupleAddr() && RelationIsXstoreTable(rel))
+		{
+			simple_xtuple_delete(rel, tid, resultRelInfo, estate);
+		}
+		else
+		{
+#endif
 		/* OK, delete the tuple */
 		simple_table_tuple_delete(rel, tid, estate->es_snapshot);
-
+#ifdef USE_XSTORE
+		}
+#endif
 		/* AFTER ROW DELETE Triggers */
 		ExecARDeleteTriggers(estate, resultRelInfo,
 							 tid, NULL, NULL, false);

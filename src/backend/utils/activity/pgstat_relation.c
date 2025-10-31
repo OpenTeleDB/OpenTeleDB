@@ -8,6 +8,7 @@
  * storage implementation and the details about individual types of
  * statistics.
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Copyright (c) 2001-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
@@ -17,6 +18,9 @@
 
 #include "postgres.h"
 
+#ifdef USE_XSTORE
+#include "access/xstore/xstorehook.h"
+#endif
 #include "access/twophase_rmgr.h"
 #include "access/xact.h"
 #include "catalog/catalog.h"
@@ -143,6 +147,10 @@ pgstat_assoc_relation(Relation rel)
 
 	/* mark this relation as the owner */
 	rel->pgstat_info->relation = rel;
+	#ifdef USE_XSTORE
+	if (RelationIsXstoreTable(rel))
+		rel->pgstat_info->is_xstore = true;
+	#endif
 }
 
 /*
@@ -374,7 +382,12 @@ pgstat_count_heap_insert(Relation rel, PgStat_Counter n)
 void
 pgstat_count_heap_update(Relation rel, bool hot, bool newpage)
 {
+#ifdef USE_XSTORE
+	if (!RelationIsXstoreTable(rel))
+		Assert(!(hot && newpage));
+#elif
 	Assert(!(hot && newpage));
+#endif
 
 	if (pgstat_should_count_relation(rel))
 	{
@@ -566,8 +579,17 @@ AtEOXact_PgStat_Relations(PgStat_SubXactStatus *xact_state, bool isCommit)
 			tabstat->counts.delta_live_tuples +=
 				trans->tuples_inserted - trans->tuples_deleted;
 			/* update and delete each create a dead tuple */
+#ifdef USE_XSTORE
+			if(tabstat->is_xstore)
+				tabstat->counts.delta_dead_tuples +=
+					trans->tuples_deleted;
+			else
+				tabstat->counts.delta_dead_tuples +=
+					trans->tuples_updated + trans->tuples_deleted;
+#else
 			tabstat->counts.delta_dead_tuples +=
 				trans->tuples_updated + trans->tuples_deleted;
+#endif
 			/* insert, update, delete each count as one change event */
 			tabstat->counts.changed_tuples +=
 				trans->tuples_inserted + trans->tuples_updated +
@@ -576,8 +598,17 @@ AtEOXact_PgStat_Relations(PgStat_SubXactStatus *xact_state, bool isCommit)
 		else
 		{
 			/* inserted tuples are dead, deleted tuples are unaffected */
+#ifdef USE_XSTORE
+			if(tabstat->is_xstore)
+				tabstat->counts.delta_dead_tuples +=
+					trans->tuples_inserted;
+			else
+				tabstat->counts.delta_dead_tuples +=
+					trans->tuples_inserted + trans->tuples_updated;
+#else
 			tabstat->counts.delta_dead_tuples +=
 				trans->tuples_inserted + trans->tuples_updated;
+#endif
 			/* an aborted xact generates no changed_tuple events */
 		}
 		tabstat->trans = NULL;
@@ -752,8 +783,17 @@ pgstat_twophase_postcommit(TransactionId xid, uint16 info,
 	}
 	pgstat_info->counts.delta_live_tuples +=
 		rec->tuples_inserted - rec->tuples_deleted;
+#ifdef USE_XSTORE
+	if(pgstat_info->is_xstore)
+		pgstat_info->counts.delta_dead_tuples +=
+			rec->tuples_deleted;
+	else
+		pgstat_info->counts.delta_dead_tuples +=
+			rec->tuples_updated + rec->tuples_deleted;
+#else
 	pgstat_info->counts.delta_dead_tuples +=
 		rec->tuples_updated + rec->tuples_deleted;
+#endif
 	pgstat_info->counts.changed_tuples +=
 		rec->tuples_inserted + rec->tuples_updated +
 		rec->tuples_deleted;
@@ -785,8 +825,17 @@ pgstat_twophase_postabort(TransactionId xid, uint16 info,
 	pgstat_info->counts.tuples_inserted += rec->tuples_inserted;
 	pgstat_info->counts.tuples_updated += rec->tuples_updated;
 	pgstat_info->counts.tuples_deleted += rec->tuples_deleted;
+#ifdef USE_XSTORE
+	if(pgstat_info->is_xstore)
+		pgstat_info->counts.delta_dead_tuples +=
+			rec->tuples_inserted;
+	else
+		pgstat_info->counts.delta_dead_tuples +=
+			rec->tuples_inserted + rec->tuples_updated;
+#else
 	pgstat_info->counts.delta_dead_tuples +=
 		rec->tuples_inserted + rec->tuples_updated;
+#endif
 }
 
 /*

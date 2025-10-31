@@ -4,6 +4,7 @@
  *	  Search code for postgres btrees.
  *
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -43,7 +44,11 @@ static bool _bt_steppage(IndexScanDesc scan, ScanDirection dir);
 static bool _bt_readnextpage(IndexScanDesc scan, BlockNumber blkno, ScanDirection dir);
 static bool _bt_parallel_readpage(IndexScanDesc scan, BlockNumber blkno,
 								  ScanDirection dir);
+#ifdef USE_XSTORE
+Buffer _bt_walk_left(Relation rel, Buffer buf);
+#else
 static Buffer _bt_walk_left(Relation rel, Buffer buf);
+#endif
 static bool _bt_endpoint(IndexScanDesc scan, ScanDirection dir);
 static inline void _bt_initialize_more_data(BTScanOpaque so, ScanDirection dir);
 
@@ -2374,7 +2379,11 @@ _bt_parallel_readpage(IndexScanDesc scan, BlockNumber blkno, ScanDirection dir)
  * It is possible for the returned leaf page to be half-dead; caller must
  * check that condition and step left again when required.
  */
+#ifdef USE_XSTORE
+Buffer
+#else
 static Buffer
+#endif
 _bt_walk_left(Relation rel, Buffer buf)
 {
 	Page		page;

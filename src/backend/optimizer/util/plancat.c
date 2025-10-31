@@ -4,6 +4,7 @@
  *	   routines for accessing the system catalogs
  *
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -52,6 +53,9 @@
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
+#ifdef USE_XSTORE
+#include "access/xstore/xstorehook.h"
+#endif
 
 /* GUC parameter */
 int			constraint_exclusion = CONSTRAINT_EXCLUSION_PARTITION;
@@ -337,7 +341,11 @@ get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
 				/*
 				 * Fetch the ordering information for the index, if any.
 				 */
+#ifdef USE_XSTORE
+				if (info->relam == BTREE_AM_OID || OidIsXBTree(info->relam))
+#else
 				if (info->relam == BTREE_AM_OID)
+#endif
 				{
 					/*
 					 * If it's a btree index, we can use its opfamily OIDs
@@ -485,7 +493,11 @@ get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
 						info->tuples = rel->tuples;
 				}
 
+#ifdef USE_XSTORE
+				if (info->relam == BTREE_AM_OID || OidIsXBTree(info->relam))
+#else
 				if (info->relam == BTREE_AM_OID)
+#endif
 				{
 					/*
 					 * For btrees, get tree height while we have the index
@@ -1012,8 +1024,23 @@ infer_collation_opclass_match(InferenceElem *elem, Relation idxRel,
 		if (elem->inferopclass != InvalidOid &&
 			(inferopfamily != opfamily || inferopcinputtype != opcinputtype))
 		{
+			#ifdef USE_XSTORE
+			if(GlobalXStoreHook.amHook->RelationIsXstoreIndex && GlobalXStoreHook.amHook->RelationIsXstoreIndex(idxRel))
+			{
+				if(inferopcinputtype != opcinputtype ||
+				   !GlobalXStoreHook.amHook->SameOpfamilyForBtreeAndXBtree(inferopfamily, opfamily))
+				{
+					continue;
+				}
+			}
+			else
+			{
+				continue;
+			}
+			#else
 			/* Attribute needed to match opclass, but didn't */
 			continue;
+			#endif
 		}
 
 		if (elem->infercollid != InvalidOid &&

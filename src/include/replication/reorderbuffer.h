@@ -2,6 +2,7 @@
  * reorderbuffer.h
  *	  PostgreSQL logical replay/reorder buffer management.
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Copyright (c) 2012-2024, PostgreSQL Global Development Group
  *
  * src/include/replication/reorderbuffer.h
@@ -47,6 +48,11 @@ typedef enum ReorderBufferChangeType
 	REORDER_BUFFER_CHANGE_INSERT,
 	REORDER_BUFFER_CHANGE_UPDATE,
 	REORDER_BUFFER_CHANGE_DELETE,
+#ifdef USE_XSTORE
+	REORDER_BUFFER_CHANGE_XINSERT,
+    REORDER_BUFFER_CHANGE_XUPDATE,
+    REORDER_BUFFER_CHANGE_XDELETE,
+#endif		
 	REORDER_BUFFER_CHANGE_MESSAGE,
 	REORDER_BUFFER_CHANGE_INVALIDATION,
 	REORDER_BUFFER_CHANGE_INTERNAL_SNAPSHOT,

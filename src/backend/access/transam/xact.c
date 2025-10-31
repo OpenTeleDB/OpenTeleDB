@@ -5,6 +5,7 @@
  *
  * See src/backend/access/transam/README for more information.
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -19,7 +20,9 @@
 
 #include <time.h>
 #include <unistd.h>
-
+#ifdef USE_XSTORE
+#include "access/xstore/xstorehook.h"
+#endif
 #include "access/commit_ts.h"
 #include "access/multixact.h"
 #include "access/parallel.h"
@@ -133,6 +136,7 @@ static TransactionId *ParallelCurrentXids;
  */
 int			MyXactFlags;
 
+#ifndef USE_XSTORE
 /*
  *	transaction states - transaction state from server perspective
  */
@@ -216,6 +220,7 @@ typedef struct TransactionStateData
 } TransactionStateData;
 
 typedef TransactionStateData *TransactionState;
+#endif
 
 /*
  * Serialized representation used to transmit transaction state to parallel
@@ -326,7 +331,9 @@ static SubXactCallbackItem *SubXact_callbacks = NULL;
 
 /* local function prototypes */
 static void AssignTransactionId(TransactionState s);
+#ifndef USE_XSTORE
 static void AbortTransaction(void);
+#endif
 static void AtAbort_Memory(void);
 static void AtCleanup_Memory(void);
 static void AtAbort_ResourceOwner(void);
@@ -366,7 +373,9 @@ static void AtSubStart_ResourceOwner(void);
 static void ShowTransactionState(const char *str);
 static void ShowTransactionStateRec(const char *str, TransactionState s);
 static const char *BlockStateAsString(TBlockState blockState);
+#ifndef USE_XSTORE
 static const char *TransStateAsString(TransState state);
+#endif
 
 
 /* ----------------------------------------------------------------
@@ -392,7 +401,11 @@ IsTransactionState(void)
 	 * transition states to do anything interesting.  Hence, the only "valid"
 	 * state is TRANS_INPROGRESS.
 	 */
+#ifdef USE_XSTORE
+	return (s->state == TRANS_INPROGRESS || s->state == TRANS_UNDO);
+#else
 	return (s->state == TRANS_INPROGRESS);
+#endif
 }
 
 /*
@@ -456,6 +469,14 @@ GetCurrentTransactionId(void)
 		AssignTransactionId(s);
 	return XidFromFullTransactionId(s->fullTransactionId);
 }
+
+#ifdef USE_XSTORE
+TransactionState
+GetCurrentTransactionSate(void)
+{
+	return CurrentTransactionState;
+}
+#endif
 
 /*
  *	GetCurrentTransactionIdIfAny
@@ -690,6 +711,14 @@ AssignTransactionId(TransactionState s)
 	if (isSubXact && XLogLogicalInfoActive() &&
 		!TopTransactionStateData.didLogXid)
 		log_unknown_top = true;
+
+#ifdef USE_XSTORE
+	if(!isSubXact && IsUnderPostmaster)
+	{
+		if (GlobalXStoreHook.transHook->AllocateUndoLog)
+			GlobalXStoreHook.transHook->AllocateUndoLog();
+	}
+#endif
 
 	/*
 	 * Generate a new FullTransactionId and record its xid in PGPROC and
@@ -2036,6 +2065,11 @@ StartTransaction(void)
 	s->state = TRANS_START;
 	s->fullTransactionId = InvalidFullTransactionId;	/* until assigned */
 
+#ifdef USE_XSTORE
+	if (GlobalXStoreHook.transHook->SetMyFrozenXmin)
+		GlobalXStoreHook.transHook->SetMyFrozenXmin();
+#endif
+
 	/* Determine if statements are logged in this transaction */
 	xact_is_sampled = log_xact_sample_rate != 0 &&
 		(log_xact_sample_rate == 1 ||
@@ -2379,6 +2413,11 @@ CommitTransaction(void)
 
 	AtEOXact_MultiXact();
 
+#ifdef USE_XSTORE
+	if (GlobalXStoreHook.xmultiHook && GlobalXStoreHook.xmultiHook->AtEOXact_XMultiXact)
+		GlobalXStoreHook.xmultiHook->AtEOXact_XMultiXact();
+#endif
+
 	ResourceOwnerRelease(TopTransactionResourceOwner,
 						 RESOURCE_RELEASE_LOCKS,
 						 true, true);
@@ -2616,6 +2655,10 @@ PrepareTransaction(void)
 	AtPrepare_PredicateLocks();
 	AtPrepare_PgStat();
 	AtPrepare_MultiXact();
+#ifdef USE_XSTORE
+	if (GlobalXStoreHook.xmultiHook && GlobalXStoreHook.xmultiHook->AtPrepare_XMultiXact)
+		GlobalXStoreHook.xmultiHook->AtPrepare_XMultiXact();
+#endif
 	AtPrepare_RelationMap();
 
 	/*
@@ -2679,6 +2722,11 @@ PrepareTransaction(void)
 	PostPrepare_smgr();
 
 	PostPrepare_MultiXact(xid);
+
+#ifdef USE_XSTORE
+	if (GlobalXStoreHook.xmultiHook && GlobalXStoreHook.xmultiHook->PostPrepare_XMultiXact)
+		GlobalXStoreHook.xmultiHook->PostPrepare_XMultiXact(xid);
+#endif
 
 	PostPrepare_PredicateLocks(xid);
 
@@ -2745,7 +2793,11 @@ PrepareTransaction(void)
 /*
  *	AbortTransaction
  */
+#ifdef USE_XSTORE
+void
+#else
 static void
+#endif
 AbortTransaction(void)
 {
 	TransactionState s = CurrentTransactionState;
@@ -2909,6 +2961,10 @@ AbortTransaction(void)
 		AtEOXact_RelationCache(false);
 		AtEOXact_Inval(false);
 		AtEOXact_MultiXact();
+#ifdef USE_XSTORE
+		if (GlobalXStoreHook.xmultiHook && GlobalXStoreHook.xmultiHook->AtEOXact_XMultiXact)
+			GlobalXStoreHook.xmultiHook->AtEOXact_XMultiXact();
+#endif
 		ResourceOwnerRelease(TopTransactionResourceOwner,
 							 RESOURCE_RELEASE_LOCKS,
 							 false, true);
@@ -5694,7 +5750,11 @@ BlockStateAsString(TBlockState blockState)
  * TransStateAsString
  *		Debug support
  */
+#ifdef USE_XSTORE
+const char *
+#else
 static const char *
+#endif
 TransStateAsString(TransState state)
 {
 	switch (state)
@@ -5711,6 +5771,10 @@ TransStateAsString(TransState state)
 			return "ABORT";
 		case TRANS_PREPARE:
 			return "PREPARE";
+#ifdef USE_XSTORE
+		case TRANS_UNDO:	
+			return "UNDO";
+#endif
 	}
 	return "UNRECOGNIZED";
 }
@@ -6382,3 +6446,14 @@ xact_redo(XLogReaderState *record)
 	else
 		elog(PANIC, "xact_redo: unknown op code %u", info);
 }
+
+#ifdef USE_XSTORE
+/*
+ *  GetCurrentCommandIdUsed
+ */
+bool 
+GetCurrentCommandIdUsed(void)
+{
+    return currentCommandIdUsed;
+}
+#endif

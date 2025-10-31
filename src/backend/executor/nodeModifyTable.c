@@ -3,6 +3,7 @@
  * nodeModifyTable.c
  *	  routines to handle ModifyTable nodes.
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -70,6 +71,10 @@
 #include "utils/datum.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
+#ifdef USE_XSTORE
+#include "access/xstore/xstorehook.h"
+#include "executor/tuptable.h"
+#endif
 
 
 typedef struct MTTargetRelLookup
@@ -1127,7 +1132,13 @@ ExecInsert(ModifyTableContext *context,
 												   &specConflict,
 												   arbiterIndexes,
 												   false);
-
+#ifdef USE_XSTORE
+			if(TTSIsXStore(slot) && specConflict)
+			{
+				Assert(GlobalXStoreHook.amHook->ExecDeleteIndexTuples != NULL);
+				GlobalXStoreHook.amHook->ExecDeleteIndexTuples(resultRelInfo, slot, &slot->tts_tid, estate, NULL, false, true);
+			}
+#endif
 			/* adjust the tuple's state accordingly */
 			table_tuple_complete_speculative(resultRelationDesc, slot,
 											 specToken, !specConflict);
@@ -1341,6 +1352,16 @@ ExecDeletePrologue(ModifyTableContext *context, ResultRelInfo *resultRelInfo,
 	if (result)
 		*result = TM_Ok;
 
+#ifdef USE_XSTORE
+	/*
+	 * Open the table's indexes for xstore, if we have not done so already,
+	 * so that we can add new index entries for the inserted tuple.
+	 */
+	if (resultRelInfo->ri_RelationDesc->rd_rel->relhasindex &&
+		resultRelInfo->ri_IndexRelationDescs == NULL)
+		ExecOpenIndices(resultRelInfo, false /* not speculative for delete*/);
+#endif
+
 	/* BEFORE ROW DELETE triggers */
 	if (resultRelInfo->ri_TrigDesc &&
 		resultRelInfo->ri_TrigDesc->trig_delete_before_row)
@@ -1513,6 +1534,19 @@ ExecDelete(ModifyTableContext *context,
 	}
 	else
 	{
+#ifdef USE_XSTORE
+		if (GetTTSOpsXHeapTupleAddr() &&
+			RelationIsXstoreTable(resultRelInfo->ri_RelationDesc) &&
+			resultRelInfo->ri_RelationDesc->rd_indexlist != NIL)
+		{
+			context->tmfd.oldslot = MakeSingleTupleTableSlot(resultRelInfo->ri_RelationDesc->rd_att,
+															GetTTSOpsXHeapTupleAddr());
+		}
+		else
+		{
+			context->tmfd.oldslot = NULL;
+		}
+#endif
 		/*
 		 * delete the tuple
 		 *
@@ -1528,6 +1562,14 @@ ldelete:
 		if (tmresult)
 			*tmresult = result;
 
+#ifdef USE_XSTORE
+		if (result != TM_Ok && context->tmfd.oldslot != NULL && TTSIsXStore(context->tmfd.oldslot))
+		{
+			// free the oldslot
+			ExecDropSingleTupleTableSlot(context->tmfd.oldslot);
+			context->tmfd.oldslot = NULL;
+		}
+#endif
 		switch (result)
 		{
 			case TM_SelfModified:
@@ -1566,6 +1608,16 @@ ldelete:
 				return NULL;
 
 			case TM_Ok:
+#ifdef USE_XSTORE
+			{
+				if (context->tmfd.oldslot != NULL && TTSIsXStore(context->tmfd.oldslot)) {
+					Assert(GlobalXStoreHook.amHook->ExecDeleteIndexTuples != NULL);
+					GlobalXStoreHook.amHook->ExecDeleteIndexTuples(resultRelInfo, context->tmfd.oldslot, &context->tmfd.oldslot->tts_tid, estate, NULL, false, false);
+					ExecDropSingleTupleTableSlot(context->tmfd.oldslot);
+					context->tmfd.oldslot = NULL;
+				}
+			}
+#endif
 				break;
 
 			case TM_Updated:
@@ -2123,6 +2175,29 @@ lreplace:
 	if (resultRelationDesc->rd_att->constr)
 		ExecConstraints(resultRelInfo, slot, estate);
 
+#ifdef USE_XSTORE
+	// If resultRelInfo->ri_oldTupleSlot is invalid, but we need old tuples to delete xbtree index.
+	// Make a xheap slot to resultRelInfo->ri_oldTupleSlot, and set to tmfd.oldslot.
+	// The tmfd.oldslot will get the old tuple from xheap_update.
+	if (GetTTSOpsXHeapTupleAddr() &&
+		RelationIsXstoreTable(resultRelInfo->ri_RelationDesc) &&
+		resultRelInfo->ri_RelationDesc->rd_indexlist != NIL &&
+		(resultRelInfo->ri_oldTupleSlot == NULL || TTS_EMPTY(resultRelInfo->ri_oldTupleSlot)))
+	{
+		if (resultRelInfo->ri_oldTupleSlot == NULL)
+		{
+			resultRelInfo->ri_oldTupleSlot = table_slot_create(resultRelInfo->ri_RelationDesc,
+						  &estate->es_tupleTable);
+		}
+		context->tmfd.oldslot = resultRelInfo->ri_oldTupleSlot;
+	}
+	else
+	{
+		context->tmfd.oldslot = NULL;
+	}
+	context->tmfd.should_update_xbtree = false;
+#endif
+
 	/*
 	 * replace the heap tuple
 	 *
@@ -2140,6 +2215,9 @@ lreplace:
 								&context->tmfd, &updateCxt->lockmode,
 								&updateCxt->updateIndexes);
 
+#ifdef USE_XSTORE
+	context->tmfd.oldslot = NULL;
+#endif
 	return result;
 }
 
@@ -2159,12 +2237,39 @@ ExecUpdateEpilogue(ModifyTableContext *context, UpdateContext *updateCxt,
 
 	/* insert index entries for tuple if necessary */
 	if (resultRelInfo->ri_NumIndices > 0 && (updateCxt->updateIndexes != TU_None))
+#ifdef USE_XSTORE
+	{
+		if (context->tmfd.should_update_xbtree)
+		{
+			ExecIndexTuplesState exec_index_tuples_state;
+			exec_index_tuples_state.estate = context->estate;
+			exec_index_tuples_state.conflict = NULL;
+			Assert(GlobalXStoreHook.amHook->ExecDeleteIndexTuplesGuts != NULL);
+			Assert(GlobalXStoreHook.amHook->ExecInsertIndexTuplesGuts != NULL);
+			GlobalXStoreHook.amHook->ExecDeleteIndexTuplesGuts(resultRelInfo, slot, &exec_index_tuples_state,
+															   context->tmfd.modifiedIdxAttrs, context->tmfd.inplace_update);
+			recheckIndexes = GlobalXStoreHook.amHook->ExecInsertIndexTuplesGuts(resultRelInfo, slot, &exec_index_tuples_state,
+												false, false, NULL, NIL,
+												context->tmfd.modifiedIdxAttrs, context->tmfd.inplace_update);
+			bms_free(context->tmfd.modifiedIdxAttrs);
+			context->tmfd.modifiedIdxAttrs = NULL;
+			context->tmfd.should_update_xbtree = false;
+		}
+		else
+		{
+			recheckIndexes = ExecInsertIndexTuples(resultRelInfo,
+											   slot, context->estate,
+											   true, false,
+											   NULL, NIL, (updateCxt->updateIndexes == TU_Summarizing));
+		}
+	}
+#else
 		recheckIndexes = ExecInsertIndexTuples(resultRelInfo,
 											   slot, context->estate,
 											   true, false,
 											   NULL, NIL,
 											   (updateCxt->updateIndexes == TU_Summarizing));
-
+#endif
 	/* AFTER ROW UPDATE Triggers */
 	ExecARUpdateTriggers(context->estate, resultRelInfo,
 						 NULL, NULL,
@@ -2403,6 +2508,16 @@ redo_act:
 				return NULL;
 
 			case TM_Ok:
+#ifdef USE_XSTORE
+			{
+				if (context->tmfd.oldslot != NULL && TTSIsXStore(context->tmfd.oldslot)) {
+					Assert(GlobalXStoreHook.amHook->ExecDeleteIndexTuples != NULL);
+					GlobalXStoreHook.amHook->ExecDeleteIndexTuples(resultRelInfo, context->tmfd.oldslot, &context->tmfd.oldslot->tts_tid, estate, NULL, false, false);
+					ExecDropSingleTupleTableSlot(context->tmfd.oldslot);
+					context->tmfd.oldslot = NULL;
+				}
+			}
+#endif
 				break;
 
 			case TM_Updated:
@@ -2559,6 +2674,9 @@ ExecOnConflictUpdate(ModifyTableContext *context,
 	Datum		xminDatum;
 	TransactionId xmin;
 	bool		isnull;
+#ifdef USE_XSTORE
+	uint8       lockflags = 0;
+#endif
 
 	/*
 	 * Parse analysis should have blocked ON CONFLICT for all system
@@ -2577,11 +2695,23 @@ ExecOnConflictUpdate(ModifyTableContext *context,
 	 * previous conclusion that the tuple is conclusively committed is not
 	 * true anymore.
 	 */
+#ifdef USE_XSTORE
+	lockflags = TUPLE_LOCK_FLAG_UPDATE_ON_CONFLICT;
+	if (!IsolationUsesXactSnapshot())
+		lockflags |= TUPLE_LOCK_FLAG_FIND_LAST_VERSION;
+	test = table_tuple_lock(relation, conflictTid,
+							context->estate->es_snapshot,
+							existing, context->estate->es_output_cid,
+							lockmode, LockWaitBlock, lockflags,
+							&tmfd);
+#else
 	test = table_tuple_lock(relation, conflictTid,
 							context->estate->es_snapshot,
 							existing, context->estate->es_output_cid,
 							lockmode, LockWaitBlock, 0,
 							&tmfd);
+#endif
+
 	switch (test)
 	{
 		case TM_Ok:
@@ -2950,11 +3080,19 @@ ExecMergeMatched(ModifyTableContext *context, ResultRelInfo *resultRelInfo,
 					  InplaceUpdateTupleLock);
 			lockedtid = *tupleid;
 		}
+#ifdef USE_XSTORE
+		if (!table_tuple_fetch_row_version(resultRelInfo->ri_RelationDesc,
+										   tupleid,
+										   RelationIsXstoreTable(resultRelInfo->ri_RelationDesc)? GetLatestSnapshot() : SnapshotAny,
+										   resultRelInfo->ri_oldTupleSlot))
+			elog(ERROR, "failed to fetch the target tuple");
+#else
 		if (!table_tuple_fetch_row_version(resultRelInfo->ri_RelationDesc,
 										   tupleid,
 										   SnapshotAny,
 										   resultRelInfo->ri_oldTupleSlot))
 			elog(ERROR, "failed to fetch the target tuple");
+#endif
 	}
 
 	/*
@@ -3089,6 +3227,7 @@ lmerge_matched:
 				if (resultRelInfo->ri_TrigDesc &&
 					resultRelInfo->ri_TrigDesc->trig_delete_instead_row)
 				{
+					/* todo: analyze the case for xstore */
 					if (!ExecIRDeleteTriggers(estate, resultRelInfo,
 											  oldtuple))
 						goto out;	/* "do nothing" */
@@ -3097,9 +3236,42 @@ lmerge_matched:
 				{
 					/* checked ri_needLockTagTuple above */
 					Assert(oldtuple == NULL);
-
+#ifdef USE_XSTORE
+					if (GetTTSOpsXHeapTupleAddr() &&
+						RelationIsXstoreTable(resultRelInfo->ri_RelationDesc) &&
+						resultRelInfo->ri_RelationDesc->rd_indexlist != NIL)
+					{
+						context->tmfd.oldslot = MakeSingleTupleTableSlot(resultRelInfo->ri_RelationDesc->rd_att,
+																		GetTTSOpsXHeapTupleAddr());
+					}
+					else
+					{
+						context->tmfd.oldslot = NULL;
+					}
+#endif
 					result = ExecDeleteAct(context, resultRelInfo, tupleid,
 										   false);
+#ifdef USE_XSTORE
+					if (result == TM_Ok)
+ 					{
+						if (context->tmfd.oldslot != NULL && TTSIsXStore(context->tmfd.oldslot))
+						{
+							Assert(GlobalXStoreHook.amHook->ExecDeleteIndexTuples != NULL);
+							GlobalXStoreHook.amHook->ExecDeleteIndexTuples(resultRelInfo, context->tmfd.oldslot, &context->tmfd.oldslot->tts_tid, estate, NULL, false, false);
+							ExecDropSingleTupleTableSlot(context->tmfd.oldslot);
+							context->tmfd.oldslot = NULL;
+						}
+					}
+					else
+					{
+						if (context->tmfd.oldslot != NULL && TTSIsXStore(context->tmfd.oldslot))
+						{
+							// free the oldslot
+							ExecDropSingleTupleTableSlot(context->tmfd.oldslot);
+							context->tmfd.oldslot = NULL;
+						}
+					}
+#endif
 				}
 
 				if (result == TM_Ok)
@@ -4304,10 +4476,31 @@ ExecModifyTable(PlanState *pstate)
 						LockTuple(relation, tupleid, InplaceUpdateTupleLock);
 						tuplock = true;
 					}
+#ifdef USE_XSTORE
+					if (RelationIsXstoreTable(relation))
+					{
+						// Do not use SnapshotAny, because that maybe get aborted tuple for xstore.
+						//
+						// If another transaction updated this tuple after we fetch,
+						// the EPQ process in ExecUpdate will lock the tuple and refetch old tuple again.
+						if (!table_tuple_fetch_row_version(relation, tupleid,
+													   estate->es_snapshot ? estate->es_snapshot : GetLatestSnapshot(),
+													   oldSlot))
+						elog(ERROR, "failed to fetch tuple being updated");
+					}
+					else
+					{
+						if (!table_tuple_fetch_row_version(relation, tupleid,
+													   SnapshotAny,
+													   oldSlot))
+						elog(ERROR, "failed to fetch tuple being updated");
+					}
+#else
 					if (!table_tuple_fetch_row_version(relation, tupleid,
 													   SnapshotAny,
 													   oldSlot))
 						elog(ERROR, "failed to fetch tuple being updated");
+#endif
 				}
 				slot = ExecGetUpdateNewTuple(resultRelInfo, context.planSlot,
 											 oldSlot);

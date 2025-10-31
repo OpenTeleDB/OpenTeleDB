@@ -3,6 +3,7 @@
  * bufmgr.c
  *	  buffer manager interface routines
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -48,12 +49,14 @@
 #include "pg_trace.h"
 #include "pgstat.h"
 #include "postmaster/bgwriter.h"
+#include "storage/block.h"
 #include "storage/buf_internals.h"
 #include "storage/bufmgr.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
 #include "storage/lmgr.h"
 #include "storage/proc.h"
+#include "storage/relfilelocator.h"
 #include "storage/smgr.h"
 #include "storage/standby.h"
 #include "utils/memdebug.h"
@@ -6112,3 +6115,104 @@ EvictUnpinnedBuffer(Buffer buf)
 
 	return result;
 }
+
+
+#ifdef USE_XSTORE
+
+Buffer 
+ReadUndoBufferWithoutRelcache(RelFileLocator rnode, ForkNumber forkNum, 
+    BlockNumber blockNum, ReadBufferMode mode, BufferAccessStrategy strategy,
+    char relpersistence)
+{
+    SMgrRelation smgr = smgropen(rnode, INVALID_PROC_NUMBER);
+    return ReadBuffer_common(NULL, smgr, relpersistence, forkNum, blockNum, mode, strategy);
+}
+
+/*
+ * Try to acquire the content_lock for the buffer if must_wait is false.
+ * If the content lock is not available, return FALSE with no side-effects.
+ */
+bool 
+TryLockBuffer(Buffer buffer, int mode, bool must_wait)
+{
+	BufferDesc *buf = NULL;
+	bool ret = false;
+    Assert(BufferIsValid(buffer));
+
+    /* without tries, act as LockBuffer */
+    if (must_wait) {
+        LockBuffer(buffer, mode);
+        return true;
+    }
+
+    /* local buffers need no lock */
+    if (BufferIsLocal(buffer)) {
+        return true;
+    }
+
+    buf = GetBufferDescriptor(buffer - 1);
+    
+    if (mode == BUFFER_LOCK_SHARE) {
+        ret = LWLockConditionalAcquire(&buf->content_lock, LW_SHARED);
+    } else if (mode == BUFFER_LOCK_EXCLUSIVE) {
+        ret = LWLockConditionalAcquire(&buf->content_lock, LW_EXCLUSIVE);
+    } else {
+        ereport(ERROR, (errcode(ERRCODE_DATATYPE_MISMATCH),
+            (errmsg("unrecognized buffer lock mode for TryLockBuffer: %d", mode))));
+    }
+
+    return ret;
+}
+
+/*
+ * ForgetBuffer -- drop a buffer from shared buffers
+ *
+ * If the buffer isn't present in shared buffers, nothing happens.  If it is
+ * present, it is discarded without making any attempt to write it back out to
+ * the operating system.  The caller must therefore somehow be sure that the
+ * data won't be needed for anything now or in the future.  It assumes that
+ * there is no concurrent access to the block, except that it might be being
+ * concurrently written.
+ */
+void 
+ForgetBuffer(RelFileLocator locator, ForkNumber forkNum, BlockNumber blockNum)
+{
+    SMgrRelation smgr = smgropen(locator, INVALID_PROC_NUMBER);
+    BufferTag    tag;            /* identity of target block */
+    uint32       hash;           /* hash value for tag */
+    int          bufId;
+    BufferDesc  *bufHdr;
+    uint64       bufState;
+
+    /* create a tag so we can lookup the buffer */
+    InitBufferTag(&tag, &(smgr->smgr_rlocator.locator), forkNum, blockNum);
+
+    /* determine its hash code and partition lock ID */
+    hash = BufTableHashCode(&tag);
+
+    /* see if the block is in the buffer pool */
+    bufId = BufTableLookup(&tag, hash);
+
+    /* didn't find it, so nothing to do */
+    if (bufId < 0) {
+        return;
+    }
+
+    /* take the buffer header lock */
+    bufHdr = GetBufferDescriptor(bufId);
+    bufState = LockBufHdr(bufHdr);
+
+    /*
+     * The buffer might been evicted after we released the partition lock and
+     * before we acquired the buffer header lock.  If so, the buffer we've
+     * locked might contain some other data which we shouldn't touch. If the
+     * buffer hasn't been recycled, we proceed to invalidate it.
+     */
+    if (BufferTagsEqual(&(bufHdr->tag), &tag)) {
+        InvalidateBuffer(bufHdr);   /* releases spinlock */
+    } else {
+        UnlockBufHdr(bufHdr, bufState);
+    }
+}
+
+#endif

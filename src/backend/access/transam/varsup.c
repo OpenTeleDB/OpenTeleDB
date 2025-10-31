@@ -3,6 +3,7 @@
  * varsup.c
  *	  postgres OID & XID variables support routines
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Copyright (c) 2000-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
@@ -19,6 +20,9 @@
 #include "access/transam.h"
 #include "access/xact.h"
 #include "access/xlogutils.h"
+#ifdef USE_XSTORE
+#include "access/xstore/xstorehook.h"
+#endif
 #include "commands/dbcommands.h"
 #include "miscadmin.h"
 #include "postmaster/autovacuum.h"
@@ -376,6 +380,22 @@ SetTransactionIdLimit(TransactionId oldest_datfrozenxid, Oid oldest_datoid)
 	TransactionId xidStopLimit;
 	TransactionId xidWrapLimit;
 	TransactionId curXid;
+#ifdef USE_XSTORE
+	TransactionId xstoreXmin;
+
+	if(GlobalXStoreHook.transHook->GetGlobalFrozenXmin) {
+		xstoreXmin = GlobalXStoreHook.transHook->GetGlobalFrozenXmin();
+
+		/*
+		* When we enable xstore, we will have valid globalFrozenXid, which means the watermark for
+		* the undo data that we have actually recycled. It may be smaller than oldest xmin, so we should
+		* move the alarm xid backward.
+		*/
+		if (TransactionIdIsNormal(xstoreXmin) &&
+			TransactionIdPrecedes(xstoreXmin, oldest_datfrozenxid))
+			oldest_datfrozenxid = xstoreXmin;
+	}
+#endif
 
 	Assert(TransactionIdIsNormal(oldest_datfrozenxid));
 

@@ -3,6 +3,7 @@
  * lsyscache.c
  *	  Convenience routines for common queries in the system catalog cache.
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -48,6 +49,10 @@
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
 #include "utils/typcache.h"
+
+#ifdef USE_XSTORE
+#include "access/xstore/xstorehook.h"
+#endif
 
 /* Hook for plugins to get control in get_attavgwidth() */
 get_attavgwidth_hook_type get_attavgwidth_hook = NULL;
@@ -320,7 +325,11 @@ get_ordering_op_for_equality_op(Oid opno, bool use_lhs_type)
 		Form_pg_amop aform = (Form_pg_amop) GETSTRUCT(tuple);
 
 		/* must be btree */
+#ifdef USE_XSTORE
+		if (aform->amopmethod != BTREE_AM_OID && !OidIsXBTree(aform->amopmethod))
+#else
 		if (aform->amopmethod != BTREE_AM_OID)
+#endif
 			continue;
 
 		if (aform->amopstrategy == BTEqualStrategyNumber)
@@ -381,7 +390,11 @@ get_mergejoin_opfamilies(Oid opno)
 		Form_pg_amop aform = (Form_pg_amop) GETSTRUCT(tuple);
 
 		/* must be btree equality */
+#ifdef USE_XSTORE
+		if ((aform->amopmethod == BTREE_AM_OID || OidIsXBTree(aform->amopmethod)) &&
+#else
 		if (aform->amopmethod == BTREE_AM_OID &&
+#endif
 			aform->amopstrategy == BTEqualStrategyNumber)
 			result = lappend_oid(result, aform->amopfamily);
 	}
@@ -617,7 +630,11 @@ get_op_btree_interpretation(Oid opno)
 		StrategyNumber op_strategy;
 
 		/* must be btree */
+#ifdef USE_XSTORE
+		if (op_form->amopmethod != BTREE_AM_OID && !OidIsXBTree(op_form->amopmethod))
+#else
 		if (op_form->amopmethod != BTREE_AM_OID)
+#endif
 			continue;
 
 		/* Get the operator's btree strategy number */
@@ -655,7 +672,11 @@ get_op_btree_interpretation(Oid opno)
 				StrategyNumber op_strategy;
 
 				/* must be btree */
+#ifdef USE_XSTORE
+				if (op_form->amopmethod != BTREE_AM_OID && !OidIsXBTree(op_form->amopmethod))
+#else
 				if (op_form->amopmethod != BTREE_AM_OID)
+#endif
 					continue;
 
 				/* Get the operator's btree strategy number */
@@ -718,6 +739,9 @@ equality_ops_are_compatible(Oid opno1, Oid opno2)
 
 		/* must be btree or hash */
 		if (op_form->amopmethod == BTREE_AM_OID ||
+#ifdef USE_XSTORE
+			OidIsXBTree(op_form->amopmethod) ||
+#endif
 			op_form->amopmethod == HASH_AM_OID)
 		{
 			if (op_in_opfamily(opno2, op_form->amopfamily))
@@ -767,7 +791,11 @@ comparison_ops_are_compatible(Oid opno1, Oid opno2)
 		HeapTuple	op_tuple = &catlist->members[i]->tuple;
 		Form_pg_amop op_form = (Form_pg_amop) GETSTRUCT(op_tuple);
 
+#ifdef USE_XSTORE
+		if (op_form->amopmethod == BTREE_AM_OID || OidIsXBTree(op_form->amopmethod))
+#else
 		if (op_form->amopmethod == BTREE_AM_OID)
+#endif
 		{
 			if (op_in_opfamily(opno2, op_form->amopfamily))
 			{

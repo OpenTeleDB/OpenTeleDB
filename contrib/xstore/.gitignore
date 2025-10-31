@@ -1,0 +1,14 @@
+*.o
+*.so
+compile_commands.json
+.cache/
+.vscode/
+.deps/
+
+# Generated subdirectories
+/tmp_check/
+/results/
+/log/
+/regression.diffs
+/regression.out
+/src/bin/waldump/pg_xstore_waldump

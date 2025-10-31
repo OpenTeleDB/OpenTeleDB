@@ -3,6 +3,7 @@
  * pgoutput.c
  *		Logical Replication output plugin
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Copyright (c) 2012-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
@@ -34,6 +35,9 @@
 #include "utils/rel.h"
 #include "utils/syscache.h"
 #include "utils/varlena.h"
+#ifdef USE_XSTORE
+#include "access/xstore/xstorehook.h"
+#endif
 
 PG_MODULE_MAGIC;
 
@@ -1267,11 +1271,24 @@ pgoutput_row_filter(Relation relation, TupleTableSlot *old_slot,
 		[REORDER_BUFFER_CHANGE_INSERT] = PUBACTION_INSERT,
 		[REORDER_BUFFER_CHANGE_UPDATE] = PUBACTION_UPDATE,
 		[REORDER_BUFFER_CHANGE_DELETE] = PUBACTION_DELETE
+#ifdef USE_XSTORE
+        ,
+		[REORDER_BUFFER_CHANGE_XINSERT] = PUBACTION_INSERT,
+		[REORDER_BUFFER_CHANGE_XUPDATE] = PUBACTION_UPDATE,
+		[REORDER_BUFFER_CHANGE_XDELETE] = PUBACTION_DELETE
+#endif		
 	};
 
 	Assert(*action == REORDER_BUFFER_CHANGE_INSERT ||
 		   *action == REORDER_BUFFER_CHANGE_UPDATE ||
-		   *action == REORDER_BUFFER_CHANGE_DELETE);
+		   *action == REORDER_BUFFER_CHANGE_DELETE 
+#ifdef USE_XSTORE
+           || 
+		   *action == REORDER_BUFFER_CHANGE_XINSERT ||
+		   *action == REORDER_BUFFER_CHANGE_XUPDATE ||
+		   *action == REORDER_BUFFER_CHANGE_XDELETE
+#endif			   
+		   );
 
 	Assert(new_slot || old_slot);
 
@@ -1458,14 +1475,23 @@ pgoutput_change(LogicalDecodingContext *ctx, ReorderBufferTXN *txn,
 	switch (action)
 	{
 		case REORDER_BUFFER_CHANGE_INSERT:
+#ifdef USE_XSTORE
+		case REORDER_BUFFER_CHANGE_XINSERT:
+#endif
 			if (!relentry->pubactions.pubinsert)
 				return;
 			break;
 		case REORDER_BUFFER_CHANGE_UPDATE:
+#ifdef USE_XSTORE
+		case REORDER_BUFFER_CHANGE_XUPDATE:
+#endif
 			if (!relentry->pubactions.pubupdate)
 				return;
 			break;
 		case REORDER_BUFFER_CHANGE_DELETE:
+#ifdef USE_XSTORE
+		case REORDER_BUFFER_CHANGE_XDELETE:
+#endif
 			if (!relentry->pubactions.pubdelete)
 				return;
 
@@ -1497,9 +1523,25 @@ pgoutput_change(LogicalDecodingContext *ctx, ReorderBufferTXN *txn,
 
 	if (change->data.tp.oldtuple)
 	{
+#ifdef USE_XSTORE
+		if (action == REORDER_BUFFER_CHANGE_XINSERT || action == REORDER_BUFFER_CHANGE_XUPDATE || action == REORDER_BUFFER_CHANGE_XDELETE)
+		{
+			HeapTuple oldtuple = NULL;
+			oldtuple = XHeapTupleToHeapTuple(relation,
+									 (void *)change->data.tp.oldtuple->t_data);
+			old_slot = relentry->old_slot;
+			ExecStoreHeapTuple(oldtuple, old_slot, true);
+		}
+		else
+		{
+			old_slot = relentry->old_slot;
+			ExecStoreHeapTuple(change->data.tp.oldtuple, old_slot, false);
+		}
+#else
+
 		old_slot = relentry->old_slot;
 		ExecStoreHeapTuple(change->data.tp.oldtuple, old_slot, false);
-
+#endif
 		/* Convert tuple if needed. */
 		if (relentry->attrmap)
 		{
@@ -1512,9 +1554,24 @@ pgoutput_change(LogicalDecodingContext *ctx, ReorderBufferTXN *txn,
 
 	if (change->data.tp.newtuple)
 	{
+#ifdef USE_XSTORE
+		if (action == REORDER_BUFFER_CHANGE_XINSERT || action == REORDER_BUFFER_CHANGE_XUPDATE || action == REORDER_BUFFER_CHANGE_XDELETE)
+		{
+			HeapTuple newtuple = NULL;
+			newtuple = XHeapTupleToHeapTuple(relation,
+									 (void *)change->data.tp.newtuple->t_data);
+			new_slot = relentry->new_slot;
+			ExecStoreHeapTuple(newtuple, new_slot, true);
+		}
+		else
+		{
+			new_slot = relentry->new_slot;
+			ExecStoreHeapTuple(change->data.tp.newtuple, new_slot, false);
+		}
+#else
 		new_slot = relentry->new_slot;
 		ExecStoreHeapTuple(change->data.tp.newtuple, new_slot, false);
-
+#endif
 		/* Convert tuple if needed. */
 		if (relentry->attrmap)
 		{
@@ -1556,14 +1613,23 @@ pgoutput_change(LogicalDecodingContext *ctx, ReorderBufferTXN *txn,
 	switch (action)
 	{
 		case REORDER_BUFFER_CHANGE_INSERT:
+#ifdef USE_XSTORE
+		case REORDER_BUFFER_CHANGE_XINSERT:
+#endif
 			logicalrep_write_insert(ctx->out, xid, targetrel, new_slot,
 									data->binary, relentry->columns);
 			break;
 		case REORDER_BUFFER_CHANGE_UPDATE:
+#ifdef USE_XSTORE
+		case REORDER_BUFFER_CHANGE_XUPDATE:
+#endif
 			logicalrep_write_update(ctx->out, xid, targetrel, old_slot,
 									new_slot, data->binary, relentry->columns);
 			break;
 		case REORDER_BUFFER_CHANGE_DELETE:
+#ifdef USE_XSTORE
+		case REORDER_BUFFER_CHANGE_XDELETE:
+#endif
 			logicalrep_write_delete(ctx->out, xid, targetrel, old_slot,
 									data->binary, relentry->columns);
 			break;

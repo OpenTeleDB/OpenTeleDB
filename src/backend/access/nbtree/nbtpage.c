@@ -4,6 +4,7 @@
  *	  BTree-specific page management code for the Postgres btree access
  *	  method.
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -36,6 +37,9 @@
 #include "utils/memdebug.h"
 #include "utils/memutils.h"
 #include "utils/snapmgr.h"
+#ifdef USE_XSTORE
+#include "access/xstore/xstorehook.h"
+#endif
 
 static BTMetaPageData *_bt_getmeta(Relation rel, Buffer metabuf);
 static void _bt_delitems_delete(Relation rel, Buffer buf,
@@ -797,7 +801,9 @@ void
 _bt_checkpage(Relation rel, Buffer buf)
 {
 	Page		page = BufferGetPage(buf);
-
+#ifdef USE_XSTORE
+	Size 		_bt_specialsize;
+#endif
 	/*
 	 * ReadBuffer verifies that every newly-read page passes
 	 * PageHeaderIsValid, which means it either contains a reasonably sane
@@ -815,6 +821,20 @@ _bt_checkpage(Relation rel, Buffer buf)
 	/*
 	 * Additionally check that the special area looks sane.
 	 */
+#ifdef USE_XSTORE
+	_bt_specialsize = MAXALIGN(sizeof(BTPageOpaqueData));
+    if (IndexIsXBTree(rel)) {
+		Assert(GlobalXStoreHook.amHook->SizeOfXBTPageOpaqueData != NULL);
+        _bt_specialsize = MAXALIGN(GlobalXStoreHook.amHook->SizeOfXBTPageOpaqueData());
+    }
+	if (PageGetSpecialSize(page) != _bt_specialsize)
+		ereport(ERROR,
+				(errcode(ERRCODE_INDEX_CORRUPTED),
+				 errmsg("index \"%s\" contains corrupted page at block %u",
+						RelationGetRelationName(rel),
+						BufferGetBlockNumber(buf)),
+				 errhint("Please REINDEX it.")));
+#else
 	if (PageGetSpecialSize(page) != MAXALIGN(sizeof(BTPageOpaqueData)))
 		ereport(ERROR,
 				(errcode(ERRCODE_INDEX_CORRUPTED),
@@ -822,6 +842,7 @@ _bt_checkpage(Relation rel, Buffer buf)
 						RelationGetRelationName(rel),
 						BufferGetBlockNumber(buf)),
 				 errhint("Please REINDEX it.")));
+#endif
 }
 
 /*

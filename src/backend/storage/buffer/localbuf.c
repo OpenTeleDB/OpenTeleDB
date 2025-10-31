@@ -4,6 +4,7 @@
  *	  local buffer manager. Fast buffer manager for temporary tables,
  *	  which never need to be WAL-logged or checkpointed, etc.
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994-5, Regents of the University of California
  *
@@ -836,3 +837,51 @@ AtProcExit_LocalBuffers(void)
 	 */
 	CheckForLocalBufferLeaks();
 }
+
+#ifdef USE_XSTORE
+/*
+ * ForgetLocalBuffer - drop a buffer from local buffers
+ *
+ * This is similar to bufmgr.c's ForgetBuffer, except that we do not need
+ * to do any locking since this is all local.  As with that function, this
+ * must be used very carefully, since we'll cheerfully throw away dirty
+ * buffers without any attempt to write them.
+ */
+void ForgetLocalBuffer(RelFileLocator locator, ForkNumber forkNum, BlockNumber blockNum)
+{
+    SMgrRelation smgr = smgropen(locator, MyProcNumber);
+    BufferTag   tag;            /* identity of target block */
+    LocalBufferLookupEnt *hresult;
+    BufferDesc *bufHdr;
+    uint32		buf_state;
+
+    /*
+     * If somehow this is the first request in the session, there's nothing to
+     * do.  (This probably shouldn't happen, though.)
+     */
+    if (LocalBufHash == NULL) {
+        return;
+    }
+
+    /* create a tag so we can lookup the buffer */
+    InitBufferTag(&tag, &(smgr->smgr_rlocator.locator), forkNum, blockNum);
+
+    /* see if the block is in the local buffer pool */
+    hresult = (LocalBufferLookupEnt *)
+        hash_search(LocalBufHash, (void *) &tag, HASH_REMOVE, NULL);
+
+    /* didn't find it, so nothing to do */
+    if (!hresult) {
+        return;
+    }
+
+    /* mark buffer invalid */
+    bufHdr = GetLocalBufferDescriptor(hresult->id);
+    ClearBufferTag(&(bufHdr->tag));
+	buf_state = pg_atomic_read_u32(&bufHdr->state);
+	buf_state &= ~(BM_VALID | BM_TAG_VALID | BM_DIRTY);
+	buf_state &= ~BUF_FLAG_MASK;
+	buf_state &= ~BUF_USAGECOUNT_MASK;
+    pg_atomic_unlocked_write_u32(&bufHdr->state, buf_state);
+}
+#endif

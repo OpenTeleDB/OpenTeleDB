@@ -4,6 +4,7 @@
  *	  POSTGRES heap access method input/output definitions.
  *
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -17,6 +18,10 @@
 #include "access/htup.h"
 #include "storage/buf.h"
 #include "utils/relcache.h"
+#ifdef USE_XSTORE
+#include "access/heapam.h"
+#include "storage/bufmgr.h"
+#endif
 
 /*
  * state for bulk inserts --- private to heapam.c and hio.c
@@ -50,6 +55,11 @@ typedef struct BulkInsertStateData
 	uint32		already_extended_by;
 } BulkInsertStateData;
 
+
+#ifdef USE_XSTORE
+extern Buffer ReadBufferBI(Relation relation, BlockNumber targetBlock, ReadBufferMode mode,
+			 BulkInsertState bistate);
+#endif
 
 extern void RelationPutHeapTuple(Relation relation, Buffer buffer,
 								 HeapTuple tuple, bool token);

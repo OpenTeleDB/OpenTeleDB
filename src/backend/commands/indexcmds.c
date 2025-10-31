@@ -3,6 +3,7 @@
  * indexcmds.c
  *	  POSTGRES define and remove index code.
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -72,6 +73,9 @@
 #include "utils/regproc.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
+#ifdef USE_XSTORE
+#include "access/xstore/xstorehook.h"
+#endif
 
 
 /* non-export function prototypes */
@@ -687,6 +691,38 @@ DefineIndex(Oid tableId,
 	SetUserIdAndSecContext(rel->rd_rel->relowner,
 						   root_save_sec_context | SECURITY_RESTRICTED_OPERATION);
 
+#ifdef USE_XSTORE
+	/*
+	* Xstore table can only use xbtree index,
+	* and xbtree index can only be used by xstore.
+	*/
+	if (RelationIsXstoreTable(rel) ||
+		(rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE && ParentIsXstoreFormat(rel)))
+	{
+		// If accessMethod is btree which is the default setting, change to xbtree
+		if (strcmp(stmt->accessMethod, DEFAULT_INDEX_TYPE) == 0)
+		{
+			stmt->accessMethod = DEFAULT_XSTORE_INDEX_TYPE;
+			// run make check-xstore temporarily closed
+			// ereport(NOTICE, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			// 			errmsg("%s index is not supported for xstore, created index using xbtree", DEFAULT_INDEX_TYPE)));
+		}
+
+        if (strcmp(stmt->accessMethod, DEFAULT_XSTORE_INDEX_TYPE) != 0)
+		{
+			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						errmsg("%s index is not supported for xstore, please use xbtree instead", (stmt->accessMethod))));
+        }
+	}
+	if (strcmp(stmt->accessMethod, DEFAULT_XSTORE_INDEX_TYPE) == 0 &&
+        !(RelationIsXstoreTable(rel) ||
+		(rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)))
+	{
+        ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						errmsg("xbtree index is only supported for xstore")));
+    }
+#endif
+
 	namespaceId = RelationGetNamespace(rel);
 
 	/* Ensure that it makes sense to index this kind of relation */
@@ -1001,7 +1037,11 @@ DefineIndex(Oid tableId,
 			 * we have an exclusion constraint, it already knows the
 			 * operators, so we don't have to infer them.
 			 */
+#ifdef USE_XSTORE
+			if (stmt->unique && (accessMethodId != BTREE_AM_OID && !OidIsXBTree(accessMethodId)))
+#else
 			if (stmt->unique && accessMethodId != BTREE_AM_OID)
+#endif
 				ereport(ERROR,
 						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 						 errmsg("cannot match partition key to an index using access method \"%s\"",
