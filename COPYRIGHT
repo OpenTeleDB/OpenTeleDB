@@ -1,3 +1,7 @@
+Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
+openTeleDB is a database licensed under Mulan PSL v2 (see LICENSE),
+which is developed by Tianyi Cloud and based on PostgreSQL and Odyssey.
+
 PostgreSQL Database Management System
 (also known as Postgres, formerly known as Postgres95)
 
@@ -21,3 +25,11 @@ INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY
 AND FITNESS FOR A PARTICULAR PURPOSE.  THE SOFTWARE PROVIDED HEREUNDER IS
 ON AN "AS IS" BASIS, AND THE UNIVERSITY OF CALIFORNIA HAS NO OBLIGATIONS TO
 PROVIDE MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
+
+The following authors have created the source code of "Odyssey"
+published and distributed by YANDEX LLC as the owner:
+
+Dmitry Simonenko <pmwkaa@yandex-team.ru>
+Dmitry Sarafannikov <dsarafan@yandex-team.ru>
+Evgeniy Efimkin <efimkin@yandex-team.ru>
+Andrey Borodin <x4mmm@yandex-team.ru>
