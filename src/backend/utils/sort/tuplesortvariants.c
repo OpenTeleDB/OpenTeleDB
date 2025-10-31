@@ -9,6 +9,7 @@
  * could be easily added here, another module, or even an extension.
  *
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Copyright (c) 2022-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
@@ -23,6 +24,9 @@
 #include "access/hash.h"
 #include "access/htup_details.h"
 #include "access/nbtree.h"
+#ifdef USE_XSTORE
+#include "access/xstore/xstorehook.h"
+#endif
 #include "catalog/index.h"
 #include "executor/executor.h"
 #include "pg_trace.h"
@@ -253,7 +257,11 @@ tuplesort_begin_cluster(TupleDesc tupDesc,
 	TuplesortClusterArg *arg;
 	int			i;
 
+#ifdef USE_XSTORE
+	Assert(indexRel->rd_rel->relam == BTREE_AM_OID || OidIsXBTree(indexRel->rd_rel->relam));
+#else
 	Assert(indexRel->rd_rel->relam == BTREE_AM_OID);
+#endif
 
 	oldcontext = MemoryContextSwitchTo(base->maincontext);
 	arg = (TuplesortClusterArg *) palloc0(sizeof(TuplesortClusterArg));

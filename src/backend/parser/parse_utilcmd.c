@@ -12,6 +12,7 @@
  * respective utility commands.
  *
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -27,6 +28,9 @@
 #include "access/relation.h"
 #include "access/reloptions.h"
 #include "access/table.h"
+#ifdef USE_XSTORE
+#include "access/xstore/xstorehook.h"
+#endif
 #include "access/toast_compression.h"
 #include "catalog/dependency.h"
 #include "catalog/heap.h"
@@ -89,6 +93,9 @@ typedef struct
 	List	   *alist;			/* "after list" of things to do after creating
 								 * the table */
 	IndexStmt  *pkey;			/* PRIMARY KEY index, if any */
+#ifdef USE_XSTORE
+	char	   *access_method;
+#endif
 	bool		ispartitioned;	/* true if table is partitioned */
 	PartitionBoundSpec *partbound;	/* transformed FOR VALUES */
 	bool		ofType;			/* true if statement contains OF typename */
@@ -246,6 +253,9 @@ transformCreateStmt(CreateStmt *stmt, const char *queryString)
 	cxt.blist = NIL;
 	cxt.alist = NIL;
 	cxt.pkey = NULL;
+#ifdef USE_XSTORE
+	cxt.access_method = stmt->accessMethod;
+#endif
 	cxt.ispartitioned = stmt->partspec != NULL;
 	cxt.partbound = stmt->partbound;
 	cxt.ofType = (stmt->ofTypename != NULL);
@@ -2163,6 +2173,9 @@ transformIndexConstraint(Constraint *constraint, CreateStmtContext *cxt)
 	IndexStmt  *index;
 	List	   *notnullcmds = NIL;
 	ListCell   *lc;
+#ifdef USE_XSTORE
+	bool		isXstore = false;
+#endif
 
 	index = makeNode(IndexStmt);
 
@@ -2194,7 +2207,21 @@ transformIndexConstraint(Constraint *constraint, CreateStmtContext *cxt)
 		index->idxname = NULL;	/* DefineIndex will choose name */
 
 	index->relation = cxt->relation;
+#ifdef USE_XSTORE
+	if (cxt->access_method != NULL)
+	{
+		isXstore = strcmp(cxt->access_method, TABLE_ACCESS_METHOD_XSTORE) == 0 ? true : false;
+	}
+	else if ((cxt->rel != NULL) && (RelationIsXstoreTable(cxt->rel) ||
+		(cxt->rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE && ParentIsXstoreFormat(cxt->rel))))  // ALTER TABLE
+	{
+		isXstore = true;
+	}
+	index->accessMethod = constraint->access_method ? constraint->access_method :
+							(isXstore ? DEFAULT_XSTORE_INDEX_TYPE : DEFAULT_INDEX_TYPE);
+#else
 	index->accessMethod = constraint->access_method ? constraint->access_method : DEFAULT_INDEX_TYPE;
+#endif
 	index->options = constraint->options;
 	index->tableSpace = constraint->indexspace;
 	index->whereClause = constraint->where_clause;
@@ -2317,12 +2344,20 @@ transformIndexConstraint(Constraint *constraint, CreateStmtContext *cxt)
 		 * else dump and reload will produce a different index (breaking
 		 * pg_upgrade in particular).
 		 */
+#ifdef USE_XSTORE
+		if (index_rel->rd_rel->relam != get_index_am_oid(DEFAULT_INDEX_TYPE, false) &&
+			!OidIsXBTree(index_rel->rd_rel->relam))
+			ereport(ERROR,
+					(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+					 errmsg("index \"%s\" is not a valid index(btree or xbtree)", index_name),
+					 parser_errposition(cxt->pstate, constraint->location)));
+#else
 		if (index_rel->rd_rel->relam != get_index_am_oid(DEFAULT_INDEX_TYPE, false))
 			ereport(ERROR,
 					(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 					 errmsg("index \"%s\" is not a btree", index_name),
 					 parser_errposition(cxt->pstate, constraint->location)));
-
+#endif
 		/* Must get indclass the hard way */
 		indclassDatum = SysCacheGetAttrNotNull(INDEXRELID,
 											   index_rel->rd_indextuple,
@@ -3325,6 +3360,9 @@ transformAlterTableStmt(Oid relid, AlterTableStmt *stmt,
 	cxt.blist = NIL;
 	cxt.alist = NIL;
 	cxt.pkey = NULL;
+#ifdef USE_XSTORE
+	cxt.access_method = NULL;
+#endif
 	cxt.ispartitioned = (rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE);
 	cxt.partbound = NULL;
 	cxt.ofType = false;

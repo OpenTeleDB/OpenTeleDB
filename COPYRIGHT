@@ -1,6 +1,6 @@
 Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
 openTeleDB is a database licensed under Mulan PSL v2 (see LICENSE),
-which is developed by Tianyi Cloud and based on PostgreSQL and Odyssey.
+which is developed by Tianyi Cloud and based on PostgreSQL, Odyssey and OpenGauss.
 
 PostgreSQL Database Management System
 (also known as Postgres, formerly known as Postgres95)
@@ -33,3 +33,16 @@ Dmitry Simonenko <pmwkaa@yandex-team.ru>
 Dmitry Sarafannikov <dsarafan@yandex-team.ru>
 Evgeniy Efimkin <efimkin@yandex-team.ru>
 Andrey Borodin <x4mmm@yandex-team.ru>
+
+Copyright (c) 2020 Huawei Technologies Co.,Ltd.
+
+openGauss is licensed under Mulan PSL v2.
+You can use this software according to the terms and conditions of the Mulan PSL v2.
+You may obtain a copy of Mulan PSL v2 at:
+
+http://license.coscl.org.cn/MulanPSL2
+
+THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+See the Mulan PSL v2 for more details.

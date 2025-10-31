@@ -3,6 +3,7 @@
  * nodeIndexonlyscan.c
  *	  Routines to support index-only scans
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -44,6 +45,9 @@
 #include "storage/predicate.h"
 #include "utils/builtins.h"
 #include "utils/rel.h"
+#ifdef USE_XSTORE
+#include "access/xstore/xstorehook.h"
+#endif
 
 
 static TupleTableSlot *IndexOnlyNext(IndexOnlyScanState *node);
@@ -157,9 +161,18 @@ IndexOnlyNext(IndexOnlyScanState *node)
 		 * It's worth going through this complexity to avoid needing to lock
 		 * the VM buffer, which could cause significant contention.
 		 */
+		#ifdef USE_XSTORE
+		if (IndexIsXBTree(scandesc->indexRelation))
+		{
+			/* ignore xstore visit the tuple to check visibility */
+		} else if (!VM_ALL_VISIBLE(scandesc->heapRelation,
+							ItemPointerGetBlockNumber(tid),
+							&node->ioss_VMBuffer)) 
+		#else
 		if (!VM_ALL_VISIBLE(scandesc->heapRelation,
 							ItemPointerGetBlockNumber(tid),
 							&node->ioss_VMBuffer))
+		#endif
 		{
 			/*
 			 * Rats, we have to visit the heap to check visibility.

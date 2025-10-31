@@ -4,6 +4,7 @@
  *	  prototypes for various files in optimizer/path
  *
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -261,6 +262,9 @@ extern List *truncate_useless_pathkeys(PlannerInfo *root,
 									   RelOptInfo *rel,
 									   List *pathkeys);
 extern bool has_useful_pathkeys(PlannerInfo *root, RelOptInfo *rel);
+#ifdef USE_XSTORE
+extern bool pathkey_opfamily_equal(PathKey *key1, PathKey *key2);
+#endif
 extern List *append_pathkeys(List *target, List *source);
 extern PathKey *make_canonical_pathkey(PlannerInfo *root,
 									   EquivalenceClass *eclass, Oid opfamily,

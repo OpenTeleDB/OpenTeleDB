@@ -5,6 +5,7 @@
  *	  Planning is complete, we just need to convert the selected
  *	  Path into a Plan.
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -4698,7 +4699,11 @@ create_mergejoin_plan(PlannerInfo *root,
 		 * matter which way we imagine this column to be ordered.)  But a
 		 * non-redundant inner pathkey had better match outer's ordering too.
 		 */
+#ifdef USE_XSTORE
+		if (!pathkey_opfamily_equal(opathkey, ipathkey) ||
+#else
 		if (opathkey->pk_opfamily != ipathkey->pk_opfamily ||
+#endif
 			opathkey->pk_eclass->ec_collation != ipathkey->pk_eclass->ec_collation)
 			elog(ERROR, "left and right pathkeys do not match in mergejoin");
 		if (first_inner_match &&

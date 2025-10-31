@@ -3,6 +3,7 @@
  * snapmgr.h
  *	  POSTGRES snapshot manager
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -12,6 +13,9 @@
  */
 #ifndef SNAPMGR_H
 #define SNAPMGR_H
+#ifdef USE_XSTORE
+#include "postgres.h"
+#endif
 
 #include "access/transam.h"
 #include "utils/relcache.h"
@@ -25,12 +29,20 @@ extern PGDLLIMPORT TransactionId TransactionXmin;
 extern PGDLLIMPORT TransactionId RecentXmin;
 
 /* Variables representing various special snapshot semantics */
+#ifdef USE_XSTORE
+extern PGDLLIMPORT SnapshotData SnapshotSelfTransactionData;
+extern PGDLLIMPORT SnapshotData SnapshotNotSelfData;
+#endif
 extern PGDLLIMPORT SnapshotData SnapshotSelfData;
 extern PGDLLIMPORT SnapshotData SnapshotAnyData;
 extern PGDLLIMPORT SnapshotData CatalogSnapshotData;
 
 #define SnapshotSelf		(&SnapshotSelfData)
 #define SnapshotAny			(&SnapshotAnyData)
+#ifdef USE_XSTORE
+#define SnapshotSelfTransaction (&SnapshotSelfTransactionData)
+#define SnapshotNotSelf (&SnapshotNotSelfData)
+#endif
 
 /*
  * We don't provide a static SnapshotDirty variable because it would be
@@ -39,6 +51,12 @@ extern PGDLLIMPORT SnapshotData CatalogSnapshotData;
  */
 #define InitDirtySnapshot(snapshotdata)  \
 	((snapshotdata).snapshot_type = SNAPSHOT_DIRTY)
+
+#ifdef USE_XSTORE
+#define InitNowSnapshot(snapshotdata, cid)  \
+	((snapshotdata).snapshot_type = SNAPSHOT_NOW, \
+	 (snapshotdata).curcid = (cid))
+#endif
 
 /*
  * Similarly, some initialization is required for a NonVacuumable snapshot.

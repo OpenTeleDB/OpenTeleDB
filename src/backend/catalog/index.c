@@ -3,6 +3,7 @@
  * index.c
  *	  code to create and destroy POSTGRES index relations
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -32,6 +33,9 @@
 #include "access/transam.h"
 #include "access/visibilitymap.h"
 #include "access/xact.h"
+#ifdef USE_XSTORE
+#include "access/xstore/xstorehook.h"
+#endif
 #include "bootstrap/bootstrap.h"
 #include "catalog/binary_upgrade.h"
 #include "catalog/catalog.h"
@@ -2522,8 +2526,17 @@ CompareIndexInfo(const IndexInfo *info1, const IndexInfo *info2,
 		return false;
 
 	/* indexes are only equivalent if they have the same access method */
+#ifdef USE_XSTORE
+	if (info1->ii_Am != info2->ii_Am)
+	{
+		if (!(OidIsXBTree(info1->ii_Am) && info2->ii_Am == BTREE_AM_OID) &&
+			!(OidIsXBTree(info2->ii_Am) && info1->ii_Am == BTREE_AM_OID))
+			return false;
+	}
+#else
 	if (info1->ii_Am != info2->ii_Am)
 		return false;
+#endif
 
 	/* and same number of attributes */
 	if (info1->ii_NumIndexAttrs != info2->ii_NumIndexAttrs)
@@ -2566,7 +2579,26 @@ CompareIndexInfo(const IndexInfo *info1, const IndexInfo *info2,
 		if (collations1[i] != collations2[i])
 			return false;
 		if (opfamilies1[i] != opfamilies2[i])
+#ifdef USE_XSTORE
+		{
+			if (OidIsXBTree(info1->ii_Am) && info2->ii_Am == BTREE_AM_OID)
+			{
+				Assert(GlobalXStoreHook.amHook->SameOpfamilyForBtreeAndXBtree != NULL);
+				if (!GlobalXStoreHook.amHook->SameOpfamilyForBtreeAndXBtree(opfamilies2[i], opfamilies1[i]))
+					return false;
+			}
+			else if (OidIsXBTree(info2->ii_Am) && info1->ii_Am == BTREE_AM_OID)
+			{
+				Assert(GlobalXStoreHook.amHook->SameOpfamilyForBtreeAndXBtree != NULL);
+				if (!GlobalXStoreHook.amHook->SameOpfamilyForBtreeAndXBtree(opfamilies1[i], opfamilies2[i]))
+					return false;
+			}
+			else
+				return false;
+		}
+#else
 			return false;
+#endif
 	}
 
 	/*
@@ -2651,7 +2683,11 @@ BuildSpeculativeIndexInfo(Relation index, IndexInfo *ii)
 	 */
 	Assert(ii->ii_Unique);
 
+#ifdef USE_XSTORE
+	if (index->rd_rel->relam != BTREE_AM_OID && !OidIsXBTree(index->rd_rel->relam))
+#else
 	if (index->rd_rel->relam != BTREE_AM_OID)
+#endif
 		elog(ERROR, "unexpected non-btree speculative unique index");
 
 	ii->ii_UniqueOps = (Oid *) palloc(sizeof(Oid) * indnkeyatts);

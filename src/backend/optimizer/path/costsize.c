@@ -60,6 +60,7 @@
  * values.
  *
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -3567,7 +3568,11 @@ initial_cost_mergejoin(PlannerInfo *root, JoinCostWorkspace *workspace,
 		opathkey = (PathKey *) linitial(opathkeys);
 		ipathkey = (PathKey *) linitial(ipathkeys);
 		/* debugging check */
+#ifdef USE_XSTORE
+		if (!pathkey_opfamily_equal(opathkey, ipathkey) ||
+#else
 		if (opathkey->pk_opfamily != ipathkey->pk_opfamily ||
+#endif
 			opathkey->pk_eclass->ec_collation != ipathkey->pk_eclass->ec_collation ||
 			opathkey->pk_strategy != ipathkey->pk_strategy ||
 			opathkey->pk_nulls_first != ipathkey->pk_nulls_first)

@@ -49,7 +49,8 @@ SUBDIRS = \
 		tsm_system_rows \
 		tsm_system_time \
 		unaccent	\
-		vacuumlo
+		vacuumlo	\
+		xstore
 
 ifeq ($(with_ssl),openssl)
 SUBDIRS += pgcrypto sslinfo
@@ -61,6 +62,12 @@ ifneq ($(with_uuid),no)
 SUBDIRS += uuid-ossp
 else
 ALWAYS_SUBDIRS += uuid-ossp
+endif
+
+ifneq ($(with_xstore),no)
+SUBDIRS += xstore
+else
+ALWAYS_SUBDIRS += xstore
 endif
 
 ifeq ($(with_libxml),yes)

@@ -3,6 +3,7 @@
  * proc.c
  *	  routines to manage per-process shared memory data structure
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -36,6 +37,9 @@
 #include "access/transam.h"
 #include "access/twophase.h"
 #include "access/xlogutils.h"
+#ifdef USE_XSTORE
+#include "access/xstore/xstorehook.h"
+#endif
 #include "miscadmin.h"
 #include "pgstat.h"
 #include "postmaster/autovacuum.h"
@@ -470,6 +474,10 @@ InitProcess(void)
 	 */
 	InitLWLockAccess();
 	InitDeadLockChecking();
+#ifdef USE_XSTORE
+	if (GlobalXStoreHook.transHook->InitLocalUndoCtx)
+		GlobalXStoreHook.transHook->InitLocalUndoCtx();
+#endif
 
 #ifdef EXEC_BACKEND
 

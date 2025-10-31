@@ -4,6 +4,7 @@
  *	  POSTGRES buffer manager definitions.
  *
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -234,6 +235,19 @@ extern void IncrBufferRefCount(Buffer buffer);
 extern void CheckBufferIsPinnedOnce(Buffer buffer);
 extern Buffer ReleaseAndReadBuffer(Buffer buffer, Relation relation,
 								   BlockNumber blockNum);
+#ifdef USE_XSTORE 								   
+bool BufferPin(Buffer buffer, BufferAccessStrategy strategy);
+
+void BufferUnpin(Buffer buffer, bool fixOwner);
+
+Buffer ReadUndoBufferWithoutRelcache(RelFileLocator locator, ForkNumber forkNum, 
+    BlockNumber blockNum, ReadBufferMode mode, BufferAccessStrategy strategy,
+    char relpersistence);
+
+bool TryLockBuffer(Buffer buffer, int mode, bool must_wait);
+
+void ForgetBuffer(RelFileLocator locator, ForkNumber forkNum, BlockNumber blockNum);
+#endif
 
 extern Buffer ExtendBufferedRel(BufferManagerRelation bmr,
 								ForkNumber forkNum,
@@ -407,5 +421,9 @@ BufferGetPage(Buffer buffer)
 }
 
 #endif							/* FRONTEND */
+
+#ifdef USE_XSTORE
+void ForgetLocalBuffer(RelFileLocator locator, ForkNumber forkNum, BlockNumber blockNum);
+#endif
 
 #endif							/* BUFMGR_H */

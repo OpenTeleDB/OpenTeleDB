@@ -4,6 +4,7 @@
  *	  support for the POSTGRES executor module
  *
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -508,6 +509,13 @@ typedef struct TupOutputState
 	DestReceiver *dest;
 } TupOutputState;
 
+#ifdef USE_XSTORE
+typedef struct ExecIndexTuplesState {
+    EState* estate;
+    bool* conflict;
+} ExecIndexTuplesState;
+#endif
+
 extern TupOutputState *begin_tup_output_tupdesc(DestReceiver *dest,
 												TupleDesc tupdesc,
 												const TupleTableSlotOps *tts_ops);
@@ -628,6 +636,13 @@ extern Bitmapset *ExecGetAllUpdatedCols(ResultRelInfo *relinfo, EState *estate);
  */
 extern void ExecOpenIndices(ResultRelInfo *resultRelInfo, bool speculative);
 extern void ExecCloseIndices(ResultRelInfo *resultRelInfo);
+#ifdef USE_XSTORE
+extern List *ExecInsertIndexTuplesXbtree(ResultRelInfo *resultRelInfo,
+								   TupleTableSlot *slot, EState *estate,
+								   bool update, bool noDupErr,
+								   bool *specConflict, List *arbiterIndexes, 
+								   Bitmapset *modifiedIdxAttrs, bool inplaceUpdated);
+#endif
 extern List *ExecInsertIndexTuples(ResultRelInfo *resultRelInfo,
 								   TupleTableSlot *slot, EState *estate,
 								   bool update,

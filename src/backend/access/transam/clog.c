@@ -24,6 +24,7 @@
  * for aborts (whether sync or async), since the post-crash assumption would
  * be that such transactions failed anyway.
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -39,6 +40,10 @@
 #include "access/xlog.h"
 #include "access/xloginsert.h"
 #include "access/xlogutils.h"
+#ifdef USE_XSTORE 
+#include "access/xstore/xstorehook.h"
+#include "c.h"
+#endif
 #include "miscadmin.h"
 #include "pg_trace.h"
 #include "pgstat.h"
@@ -1133,6 +1138,28 @@ clog_redo(XLogReaderState *record)
 		xl_clog_truncate xlrec;
 
 		memcpy(&xlrec, XLogRecGetData(record), sizeof(xl_clog_truncate));
+
+#ifdef USE_XSTORE
+		if (InHotStandby && GlobalXStoreHook.transHook->ResolveRecoveryConflictWithGlobalFrozenXmin)
+		{
+			FullTransactionId next_fxid;
+			FullTransactionId ftruncate_xid;
+			uint32			  epoch;
+
+			next_fxid = ReadNextFullTransactionId();
+			epoch = EpochFromFullTransactionId(next_fxid);
+
+			/*
+			 * If xid is numerically greater than next_xid, it has to be from the last
+			 * epoch.
+			 */
+			if (unlikely(xlrec.oldestXact > XidFromFullTransactionId(next_fxid)))
+				--epoch;
+			
+			ftruncate_xid = FullTransactionIdFromEpochAndXid(epoch, xlrec.oldestXact);
+			GlobalXStoreHook.transHook->ResolveRecoveryConflictWithGlobalFrozenXmin(ftruncate_xid);
+		}
+#endif
 
 		AdvanceOldestClogXid(xlrec.oldestXact);
 

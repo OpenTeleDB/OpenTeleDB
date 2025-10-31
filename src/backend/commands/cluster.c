@@ -6,6 +6,7 @@
  * There is hardly anything left of Paul Brown's original implementation...
  *
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994-5, Regents of the University of California
  *
@@ -25,6 +26,9 @@
 #include "access/toast_internals.h"
 #include "access/transam.h"
 #include "access/xact.h"
+#ifdef USE_XSTORE
+#include "access/xstore/xstorehook.h"
+#endif
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
 #include "catalog/heap.h"
@@ -945,7 +949,11 @@ copy_table_data(Oid OIDNewHeap, Oid OIDOldHeap, Oid OIDOldIndex, bool verbose,
 	 * tells us it's cheaper.  Otherwise, always indexscan if an index is
 	 * provided, else plain seqscan.
 	 */
+#ifdef USE_XSTORE
+	if (OldIndex != NULL && (OldIndex->rd_rel->relam == BTREE_AM_OID || OidIsXBTree(OldIndex->rd_rel->relam)))
+#else
 	if (OldIndex != NULL && OldIndex->rd_rel->relam == BTREE_AM_OID)
+#endif
 		use_sort = plan_cluster_use_sort(OIDOldHeap, OIDOldIndex);
 	else
 		use_sort = false;

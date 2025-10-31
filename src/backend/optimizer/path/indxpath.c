@@ -4,6 +4,7 @@
  *	  Routines to determine which indexes are usable for scanning a
  *	  given relation, and create Paths accordingly.
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -34,6 +35,10 @@
 #include "optimizer/restrictinfo.h"
 #include "utils/lsyscache.h"
 #include "utils/selfuncs.h"
+
+#ifdef USE_XSTORE
+#include "access/xstore/xstorehook.h"
+#endif
 
 
 /* XXX see PartCollMatchesExprColl */
@@ -2220,7 +2225,11 @@ match_clause_to_indexcol(PlannerInfo *root,
 
 	/* First check for boolean-index cases. */
 	opfamily = index->opfamily[indexcol];
+#ifdef USE_XSTORE
+	if (IsBooleanOpfamily(opfamily) || IsXBtreeBooleanOpfamily(opfamily))
+#else
 	if (IsBooleanOpfamily(opfamily))
+#endif
 	{
 		iclause = match_boolean_index_clause(root, rinfo, indexcol, index);
 		if (iclause)
@@ -2704,7 +2713,11 @@ match_rowcompare_to_indexcol(PlannerInfo *root,
 	Oid			expr_coll;
 
 	/* Forget it if we're not dealing with a btree index */
+#ifdef USE_XSTORE
+	if ((index->relam != BTREE_AM_OID) && !OidIsXBTree(index->relam))
+#else
 	if (index->relam != BTREE_AM_OID)
+#endif
 		return NULL;
 
 	index_relid = index->rel->relid;
@@ -3618,7 +3631,12 @@ indexcol_is_bool_constant_for_query(PlannerInfo *root,
 	ListCell   *lc;
 
 	/* If the index isn't boolean, we can't possibly get a match */
+#ifdef USE_XSTORE
+	if (!IsBooleanOpfamily(index->opfamily[indexcol]) &&
+		!IsXBtreeBooleanOpfamily(index->opfamily[indexcol]))
+#else
 	if (!IsBooleanOpfamily(index->opfamily[indexcol]))
+#endif
 		return false;
 
 	/* Check each restriction clause for the index's rel */

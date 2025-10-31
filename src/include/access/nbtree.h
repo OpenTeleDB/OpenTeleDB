@@ -4,6 +4,7 @@
  *	  header file for postgres btree access method implementation.
  *
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -24,6 +25,14 @@
 #include "lib/stringinfo.h"
 #include "storage/bufmgr.h"
 #include "storage/shm_toc.h"
+#ifdef USE_XSTORE
+#include "fmgr.h"
+#include "access/parallel.h"
+#include "executor/instrument.h"
+#include "utils/tuplesort.h"
+#include "storage/condition_variable.h"
+#include "storage/bulk_write.h"
+#endif
 
 /* There's room for a 16-bit vacuum cycle ID in BTPageOpaqueData */
 typedef uint16 BTCycleId;
@@ -82,7 +91,10 @@ typedef BTPageOpaqueData *BTPageOpaque;
 #define BTP_HAS_GARBAGE (1 << 6)	/* page has LP_DEAD tuples (deprecated) */
 #define BTP_INCOMPLETE_SPLIT (1 << 7)	/* right sibling's downlink is missing */
 #define BTP_HAS_FULLXID	(1 << 8)	/* contains BTDeletedPageData */
-
+#ifdef USE_XSTORE
+#define BTP_VACUUM_DELETING (1 << 8)    /* vacuum worker is deleting this page */
+//todo modify flag
+#endif
 /*
  * The max allowed value of a cycle ID is a bit less than 64K.  This is
  * for convenience of pg_filedump and similar utilities: we want to use
@@ -226,7 +238,9 @@ typedef struct BTMetaPageData
 #define P_HAS_GARBAGE(opaque)	(((opaque)->btpo_flags & BTP_HAS_GARBAGE) != 0)
 #define P_INCOMPLETE_SPLIT(opaque)	(((opaque)->btpo_flags & BTP_INCOMPLETE_SPLIT) != 0)
 #define P_HAS_FULLXID(opaque)	(((opaque)->btpo_flags & BTP_HAS_FULLXID) != 0)
-
+#ifdef USE_XSTORE
+#define P_VACUUM_DELETING(opaque) ((opaque)->btpo_flags & BTP_VACUUM_DELETING)
+#endif
 /*
  * BTDeletedPageData is the page contents of a deleted page
  */
@@ -1063,7 +1077,6 @@ typedef struct BTScanOpaqueData
 	 */
 	char	   *currTuples;		/* tuple storage for currPos */
 	char	   *markTuples;		/* tuple storage for markPos */
-
 	/*
 	 * If the marked position is on the same page as current position, we
 	 * don't use markPos, but just keep the marked itemIndex in markItemIndex
@@ -1115,6 +1128,186 @@ typedef struct BTReadPageState
 	int16		targetdistance;
 
 } BTReadPageState;
+
+#ifdef USE_XSTORE
+/*
+ * Status record for spooling/sorting phase.  (Note we may have two of
+ * these due to the special requirements for uniqueness-checking with
+ * dead tuples.)
+ */
+typedef struct BTSpool
+{
+	Tuplesortstate *sortstate;	/* state data for tuplesort.c */
+	Relation	heap;
+	Relation	index;
+	bool		isunique;
+	bool		nulls_not_distinct;
+} BTSpool;
+
+/*
+ * Status for index builds performed in parallel.  This is allocated in a
+ * dynamic shared memory segment.  Note that there is a separate tuplesort TOC
+ * entry, private to tuplesort.c but allocated by this module on its behalf.
+ */
+typedef struct BTShared
+{
+	/*
+	 * These fields are not modified during the sort.  They primarily exist
+	 * for the benefit of worker processes that need to create BTSpool state
+	 * corresponding to that used by the leader.
+	 */
+	Oid			heaprelid;
+	Oid			indexrelid;
+	bool		isunique;
+	bool		nulls_not_distinct;
+	bool		isconcurrent;
+	int			scantuplesortstates;
+
+	/*
+	 * workersdonecv is used to monitor the progress of workers.  All parallel
+	 * participants must indicate that they are done before leader can use
+	 * mutable state that workers maintain during scan (and before leader can
+	 * proceed to tuplesort_performsort()).
+	 */
+	ConditionVariable workersdonecv;
+
+	/*
+	 * mutex protects all fields before heapdesc.
+	 *
+	 * These fields contain status information of interest to B-Tree index
+	 * builds that must work just the same when an index is built in parallel.
+	 */
+	slock_t		mutex;
+
+	/*
+	 * Mutable state that is maintained by workers, and reported back to
+	 * leader at end of parallel scan.
+	 *
+	 * nparticipantsdone is number of worker processes finished.
+	 *
+	 * reltuples is the total number of input heap tuples.
+	 *
+	 * havedead indicates if RECENTLY_DEAD tuples were encountered during
+	 * build.
+	 *
+	 * indtuples is the total number of tuples that made it into the index.
+	 *
+	 * brokenhotchain indicates if any worker detected a broken HOT chain
+	 * during build.
+	 */
+	int			nparticipantsdone;
+	double		reltuples;
+	bool		havedead;
+	double		indtuples;
+	bool		brokenhotchain;
+
+	/*
+	 * ParallelTableScanDescData data follows. Can't directly embed here, as
+	 * implementations of the parallel table scan desc interface might need
+	 * stronger alignment.
+	 */
+} BTShared;
+
+/*
+ * Return pointer to a BTShared's parallel table scan.
+ *
+ * c.f. shm_toc_allocate as to why BUFFERALIGN is used, rather than just
+ * MAXALIGN.
+ */
+#define ParallelTableScanFromBTShared(shared) \
+	(ParallelTableScanDesc) ((char *) (shared) + BUFFERALIGN(sizeof(BTShared)))
+
+/*
+ * Status for leader in parallel index build.
+ */
+typedef struct BTLeader
+{
+	/* parallel context itself */
+	ParallelContext *pcxt;
+
+	/*
+	 * nparticipanttuplesorts is the exact number of worker processes
+	 * successfully launched, plus one leader process if it participates as a
+	 * worker (only DISABLE_LEADER_PARTICIPATION builds avoid leader
+	 * participating as a worker).
+	 */
+	int			nparticipanttuplesorts;
+
+	/*
+	 * Leader process convenience pointers to shared state (leader avoids TOC
+	 * lookups).
+	 *
+	 * btshared is the shared state for entire build.  sharedsort is the
+	 * shared, tuplesort-managed state passed to each process tuplesort.
+	 * sharedsort2 is the corresponding btspool2 shared state, used only when
+	 * building unique indexes.  snapshot is the snapshot used by the scan iff
+	 * an MVCC snapshot is required.
+	 */
+	BTShared   *btshared;
+	Sharedsort *sharedsort;
+	Sharedsort *sharedsort2;
+	Snapshot	snapshot;
+	WalUsage   *walusage;
+	BufferUsage *bufferusage;
+} BTLeader;
+
+/*
+ * Working state for btbuild and its callback.
+ *
+ * When parallel CREATE INDEX is used, there is a BTBuildState for each
+ * participant.
+ */
+typedef struct BTBuildState
+{
+	bool		isunique;
+	bool		nulls_not_distinct;
+	bool		havedead;
+	Relation	heap;
+	BTSpool    *spool;
+
+	/*
+	 * spool2 is needed only when the index is a unique index. Dead tuples are
+	 * put into spool2 instead of spool in order to avoid uniqueness check.
+	 */
+	BTSpool    *spool2;
+	double		indtuples;
+
+	/*
+	 * btleader is only present when a parallel index build is performed, and
+	 * only in the leader process. (Actually, only the leader has a
+	 * BTBuildState.  Workers have their own spool and spool2, though.)
+	 */
+	BTLeader   *btleader;
+} BTBuildState;
+
+/*
+ * Status record for a btree page being built.  We have one of these
+ * for each active tree level.
+ */
+typedef struct BTPageState
+{
+	BulkWriteBuffer btps_buf;	/* workspace for page building */
+	BlockNumber btps_blkno;		/* block # to write this page at */
+	IndexTuple	btps_lowkey;	/* page's strict lower bound pivot tuple */
+	OffsetNumber btps_lastoff;	/* last item offset loaded */
+	Size		btps_lastextra; /* last item's extra posting list space */
+	uint32		btps_level;		/* tree level (0 = leaf) */
+	Size		btps_full;		/* "full" if less than this much free space */
+	struct BTPageState *btps_next;	/* link to parent level, if any */
+} BTPageState;
+
+/*
+ * Overall status record for index writing phase.
+ */
+typedef struct BTWriteState
+{
+	Relation	heap;
+	Relation	index;
+	BulkWriteState *bulkstate;
+	BTScanInsert inskey;		/* generic insertion scankey */
+	BlockNumber btws_pages_alloced; /* # pages allocated */
+} BTWriteState;
+#endif
 
 /*
  * We use some private sk_flags bits in preprocessed scan keys.  We're allowed
@@ -1280,6 +1473,9 @@ extern int32 _bt_compare(Relation rel, BTScanInsert key, Page page, OffsetNumber
 extern bool _bt_first(IndexScanDesc scan, ScanDirection dir);
 extern bool _bt_next(IndexScanDesc scan, ScanDirection dir);
 extern Buffer _bt_get_endpoint(Relation rel, uint32 level, bool rightmost);
+#ifdef USE_XSTORE
+extern Buffer _bt_walk_left(Relation rel, Buffer buf);
+#endif
 
 /*
  * prototypes for functions in nbtutils.c
@@ -1327,6 +1523,13 @@ extern void btadjustmembers(Oid opfamilyoid,
  */
 extern IndexBuildResult *btbuild(Relation heap, Relation index,
 								 struct IndexInfo *indexInfo);
+#ifdef USE_XSTORE
+extern double _bt_spools_heapscan(Relation heap, Relation index, BTBuildState *buildstate,
+					struct IndexInfo *indexInfo);
+extern void _bt_spooldestroy(BTSpool *btspool);
+extern void _bt_spool(BTSpool *btspool, ItemPointer self, Datum *values, bool *isnull);
+extern void _bt_end_parallel(BTLeader *btleader);
+#endif
 extern void _bt_parallel_build_main(dsm_segment *seg, shm_toc *toc);
 
 #endif							/* NBTREE_H */

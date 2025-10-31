@@ -30,6 +30,7 @@
 #include "utils/reltrigger.h"
 
 
+
 /*
  * LockRelId and LockInfo really belong to lmgr.h, but it's more convenient
  * to declare them here so we can have a LockInfoData field in a Relation.

@@ -29,6 +29,7 @@
  * This code isn't concerned about the FSM at all. The caller is responsible
  * for initializing that.
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -72,6 +73,7 @@
 #undef DISABLE_LEADER_PARTICIPATION
  */
 
+#ifndef USE_XSTORE
 /*
  * Status record for spooling/sorting phase.  (Note we may have two of
  * these due to the special requirements for uniqueness-checking with
@@ -251,11 +253,13 @@ typedef struct BTWriteState
 } BTWriteState;
 
 
+
 static double _bt_spools_heapscan(Relation heap, Relation index,
 								  BTBuildState *buildstate, IndexInfo *indexInfo);
 static void _bt_spooldestroy(BTSpool *btspool);
 static void _bt_spool(BTSpool *btspool, ItemPointer self,
 					  Datum *values, bool *isnull);
+#endif
 static void _bt_leafbuild(BTSpool *btspool, BTSpool *btspool2);
 static void _bt_build_callback(Relation index, ItemPointer tid, Datum *values,
 							   bool *isnull, bool tupleIsAlive, void *state);
@@ -275,7 +279,9 @@ static void _bt_load(BTWriteState *wstate,
 					 BTSpool *btspool, BTSpool *btspool2);
 static void _bt_begin_parallel(BTBuildState *buildstate, bool isconcurrent,
 							   int request);
+#ifndef USE_XSTORE							   
 static void _bt_end_parallel(BTLeader *btleader);
+#endif
 static Size _bt_parallel_estimate_shared(Relation heap, Snapshot snapshot);
 static double _bt_parallel_heapscan(BTBuildState *buildstate,
 									bool *brokenhotchain);
@@ -359,7 +365,11 @@ btbuild(Relation heap, Relation index, IndexInfo *indexInfo)
  *
  * Returns the total number of heap tuples scanned.
  */
+#ifdef USE_XSTORE
+double
+#else
 static double
+#endif
 _bt_spools_heapscan(Relation heap, Relation index, BTBuildState *buildstate,
 					IndexInfo *indexInfo)
 {
@@ -511,7 +521,11 @@ _bt_spools_heapscan(Relation heap, Relation index, BTBuildState *buildstate,
 /*
  * clean up a spool structure and its substructures.
  */
+#ifdef USE_XSTORE
+void
+#else
 static void
+#endif
 _bt_spooldestroy(BTSpool *btspool)
 {
 	tuplesort_end(btspool->sortstate);
@@ -521,7 +535,11 @@ _bt_spooldestroy(BTSpool *btspool)
 /*
  * spool an index entry into the sort file.
  */
+#ifdef USE_XSTORE 
+void
+#else
 static void
+#endif
 _bt_spool(BTSpool *btspool, ItemPointer self, Datum *values, bool *isnull)
 {
 	tuplesort_putindextuplevalues(btspool->sortstate, btspool->index,
@@ -1603,7 +1621,11 @@ _bt_begin_parallel(BTBuildState *buildstate, bool isconcurrent, int request)
 /*
  * Shut down workers, destroy parallel context, and end parallel mode.
  */
+#ifdef USE_XSTORE
+void
+#else
 static void
+#endif
 _bt_end_parallel(BTLeader *btleader)
 {
 	int			i;

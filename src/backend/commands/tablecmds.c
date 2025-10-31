@@ -3,6 +3,7 @@
  * tablecmds.c
  *	  Commands for creating and altering table structures and settings
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -27,6 +28,9 @@
 #include "access/xact.h"
 #include "access/xlog.h"
 #include "access/xloginsert.h"
+#ifdef USE_XSTORE
+#include "access/xstore/xstorehook.h"
+#endif
 #include "catalog/catalog.h"
 #include "catalog/heap.h"
 #include "catalog/index.h"
@@ -9830,7 +9834,11 @@ ATAddForeignKeyConstraint(List **wqueue, AlteredTableInfo *tab, Relation rel,
 		 * strategy number is equality.  (Is it reasonable to insist that
 		 * every such index AM use btree's number for equality?)
 		 */
+#ifdef USE_XSTORE
+		if (amid != BTREE_AM_OID && !OidIsXBTree(amid))
+#else
 		if (amid != BTREE_AM_OID)
+#endif
 			elog(ERROR, "only b-tree indexes are supported for foreign keys");
 		eqstrategy = BTEqualStrategyNumber;
 

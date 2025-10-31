@@ -12,6 +12,7 @@
  * CLUSTER, handled in cluster.c.
  *
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -60,7 +61,9 @@
 #include "utils/memutils.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
-
+#ifdef USE_XSTORE
+#include "access/xstore/xstorehook.h"
+#endif
 
 /*
  * GUC parameters
@@ -1659,6 +1662,19 @@ vac_update_datfrozenxid(void)
 			continue;
 		}
 
+#ifdef USE_XSTORE
+		/*
+		 * Do not consider xstore tables
+		 */
+		if (GlobalXStoreHook.amHook->GetXStoreOid != NULL && classForm->relam == GlobalXStoreHook.amHook->GetXStoreOid())
+		{
+			elog(DEBUG2,
+				 "skipping xstore table \"%s\" while computing datfrozenxid",
+				 NameStr(classForm->relname));
+			continue;
+		}
+#endif
+
 		/*
 		 * Some table AMs might not need per-relation xid / multixid horizons.
 		 * It therefore seems reasonable to allow relfrozenxid and relminmxid
@@ -1772,6 +1788,11 @@ vac_update_datfrozenxid(void)
 	heap_freetuple(tuple);
 	table_close(relation, RowExclusiveLock);
 
+#ifdef USE_XSTORE
+	if (GlobalXStoreHook.xmultiHook->TruncateXMultiXact)
+		GlobalXStoreHook.xmultiHook->TruncateXMultiXact();
+#endif
+
 	/*
 	 * If we were able to advance datfrozenxid or datminmxid, see if we can
 	 * truncate pg_xact and/or pg_multixact.  Also do it if the shared
@@ -1814,6 +1835,10 @@ vac_truncate_clog(TransactionId frozenXID,
 	Oid			minmulti_datoid;
 	bool		bogus = false;
 	bool		frozenAlreadyWrapped = false;
+
+#ifdef USE_XSTORE
+	TransactionId globalFrozenXmin;
+#endif
 
 	/* Restrict task to one backend per cluster; see SimpleLruTruncate(). */
 	LWLockAcquire(WrapLimitsVacuumLock, LW_EXCLUSIVE);
@@ -1920,6 +1945,23 @@ vac_truncate_clog(TransactionId frozenXID,
 		LWLockRelease(WrapLimitsVacuumLock);
 		return;
 	}
+
+#ifdef USE_XSTORE
+	/*
+	 * We can't truncate the clog for transactions that someone may still access.  
+	*  GetGlobalFrozenXmin will be only valid for xstore storage engine, so it
+	 * won't impact any other storage engine.
+	 */
+	if (GlobalXStoreHook.transHook->GetGlobalFrozenXmin)
+	{
+		globalFrozenXmin = GlobalXStoreHook.transHook->GetGlobalFrozenXmin();
+		elog(DEBUG2,
+				 "do not truncate the clog beyond oldsetXidHavingUndo:%d",
+				 globalFrozenXmin);
+		if (TransactionIdIsValid(globalFrozenXmin))
+			frozenXID = Min(frozenXID, globalFrozenXmin);
+	}
+#endif
 
 	/*
 	 * Advance the oldest value for commit timestamps before truncating, so

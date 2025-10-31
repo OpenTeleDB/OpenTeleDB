@@ -3,6 +3,7 @@
  * amapi.h
  *	  API for Postgres index access methods.
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Copyright (c) 2015-2024, PostgreSQL Global Development Group
  *
  * src/include/access/amapi.h
@@ -120,6 +121,14 @@ typedef bool (*aminsert_function) (Relation indexRelation,
 /* cleanup after insert */
 typedef void (*aminsertcleanup_function) (Relation indexRelation,
 										  struct IndexInfo *indexInfo);
+#ifdef USE_XSTORE
+/* delete this tuple */
+typedef bool (*amdelete_function) (Relation indexRelation,
+								   Datum *values,
+								   bool *isnull,
+								   ItemPointer heap_tid,
+								   bool is_dead);
+#endif
 
 /* bulk delete */
 typedef IndexBulkDeleteResult *(*ambulkdelete_function) (IndexVacuumInfo *info,
@@ -272,6 +281,9 @@ typedef struct IndexAmRoutine
 	ambuildempty_function ambuildempty;
 	aminsert_function aminsert;
 	aminsertcleanup_function aminsertcleanup;	/* can be NULL */
+#ifdef USE_XSTORE
+	amdelete_function amdelete;
+#endif
 	ambulkdelete_function ambulkdelete;
 	amvacuumcleanup_function amvacuumcleanup;
 	amcanreturn_function amcanreturn;	/* can be NULL */

@@ -5,6 +5,7 @@
  * only be needed by files implementing statistics support (rather than ones
  * reporting / querying stats).
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Copyright (c) 2001-2024, PostgreSQL Global Development Group
  *
  * src/include/utils/pgstat_internal.h
@@ -295,6 +296,10 @@ static const char *const slru_names[] = {
 	"serializable",
 	"subtransaction",
 	"transaction",
+#ifdef USE_XSTORE
+	"XMultiXactMember",
+	"XMultiXactOffset",
+#endif
 	"other"						/* has to be last */
 };
 

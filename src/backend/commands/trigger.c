@@ -3,6 +3,7 @@
  * trigger.c
  *	  PostgreSQL TRIGGERs support code.
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -57,6 +58,11 @@
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
 #include "utils/tuplestore.h"
+#ifdef USE_XSTORE
+#include "utils/snapshot.h"
+#include "access/xstore/xstorehook.h"
+#include "executor/tuptable.h"
+#endif
 
 
 /* GUC variables */
@@ -3490,6 +3496,50 @@ GetTupleForTrigger(EState *estate,
 	}
 	else
 	{
+#ifdef USE_XSTORE
+		if (!RelationIsXstoreTable(relation))
+		{
+			/*
+			* We expect the tuple to be present, thus very simple error handling
+			* suffices.
+			*/
+			if (!table_tuple_fetch_row_version(relation, tid, SnapshotAny, oldslot))
+				elog(ERROR, "failed to fetch tuple for trigger");
+		}
+		else
+		{
+			/*
+			* tid might get overwritten with the latest tid in non-inplace update
+			* case.  So make the copy of tid before fetching the tuple.  So that
+			* in the unsuccessful case if we need to re-fetch the tuple then we
+			* have the right tid.
+			*/
+			ItemPointerData	temp_tid;
+
+			ItemPointerCopy(tid, &temp_tid);
+			/*
+			* We expect the tuple to be present, thus very simple error handling
+			* suffices.
+			*/
+			if (!table_tuple_fetch_row_version(relation, &temp_tid,
+											estate->es_snapshot,
+											oldslot))
+			{
+				/*
+				* If the tuple is not visible to the current snapshot, it has to
+				* be one that we followed via EPQ. In that case, it needs to have
+				* been modified by an already committed transaction, otherwise
+				* we'd not get here. So get a new snapshot, and try to fetch it
+				* using that.
+				*
+				* PBORKED: ZBORKED: Better approach?
+				*/
+				if (!table_tuple_fetch_row_version(relation, tid, GetLatestSnapshot(),
+												oldslot))
+					elog(PANIC, "couldn't fetch tuple");
+			}
+		}
+#else
 		/*
 		 * We expect the tuple to be present, thus very simple error handling
 		 * suffices.
@@ -3497,6 +3547,7 @@ GetTupleForTrigger(EState *estate,
 		if (!table_tuple_fetch_row_version(relation, tid, SnapshotAny,
 										   oldslot))
 			elog(ERROR, "failed to fetch tuple for trigger");
+#endif
 	}
 
 	return true;
@@ -3731,8 +3782,10 @@ typedef struct AfterTriggerEventData
 {
 	TriggerFlags ate_flags;		/* status bits and offset to shared data */
 	ItemPointerData ate_ctid1;	/* inserted, deleted, or old updated tuple */
+#if USE_XSTORE
+	CommandId  ate_cid1;            /* insert, update, or delete reading command id */
+#endif
 	ItemPointerData ate_ctid2;	/* new updated tuple */
-
 	/*
 	 * During a cross-partition update of a partitioned table, we also store
 	 * the OIDs of source and destination partitions that are needed to fetch
@@ -3747,6 +3800,9 @@ typedef struct AfterTriggerEventDataNoOids
 {
 	TriggerFlags ate_flags;
 	ItemPointerData ate_ctid1;
+#if USE_XSTORE
+	CommandId  ate_cid1;            /* insert, update, or delete reading command id */
+#endif
 	ItemPointerData ate_ctid2;
 }			AfterTriggerEventDataNoOids;
 
@@ -3755,6 +3811,9 @@ typedef struct AfterTriggerEventDataOneCtid
 {
 	TriggerFlags ate_flags;		/* status bits and offset to shared data */
 	ItemPointerData ate_ctid1;	/* inserted, deleted, or old updated tuple */
+#if USE_XSTORE
+	CommandId  ate_cid1;            /* insert, update, or delete reading command id */
+#endif
 }			AfterTriggerEventDataOneCtid;
 
 /* AfterTriggerEventData, minus ate_*_part, ate_ctid1 and ate_ctid2 */
@@ -3915,6 +3974,10 @@ typedef struct AfterTriggersData
 	/* per-subtransaction-level data: */
 	AfterTriggersTransData *trans_stack;	/* array of structs shown below */
 	int			maxtransdepth;	/* allocated len of above array */
+
+#ifdef USE_XSTORE
+	bool 		derfer_trigger_fired;
+#endif
 } AfterTriggersData;
 
 struct AfterTriggersQueryData
@@ -4452,12 +4515,65 @@ AfterTriggerExecute(EState *estate,
 			{
 				TupleTableSlot *src_slot = ExecGetTriggerOldSlot(estate,
 																 src_relInfo);
+#ifdef USE_XSTORE
+				/*
+				* Special case for xstore, because oldtid == newtid for inplace update.
+				* we should not use SnapshotAny to fetch, because the old tuple is in undo space.
+				* But for xstore insert, SnapshotAny should still be used.
+				*/
+				if (!RelationIsXstoreTable(src_rel) || (evtshared->ats_event & TRIGGER_EVENT_OPMASK) == TRIGGER_EVENT_INSERT) 
+				{
+					if (!table_tuple_fetch_row_version(src_rel,
+												   &(event->ate_ctid1),
+												   SnapshotAny,
+												   src_slot))
+						elog(ERROR, "failed to fetch tuple1 for AFTER trigger");
+				} 
+				else 
+				{
+					Snapshot snapshot;
+					SnapshotData snapshotNow;
 
+					if (afterTriggers.derfer_trigger_fired)
+					{
+					    /*
+						 * If defer trigger fired, we use SnapshotNotSelf to find the latest committed tuple before 
+						 * this transaction.
+						 */
+						snapshot = SnapshotNotSelf;
+					}
+					else 
+					{
+						/* 
+						 * For Xstore table, we want to fetch the tuple that we updated before. The updated version
+						 * may come from two scenario:
+						 * 1. Written by ohter committed transaction.
+						 * 2. Written by current transaction in privious statement.
+						 * In Xstore, two version of the same tuple has same ctid(different from the Heap engine).
+						 *
+						 * For scenario 1, we can't just use the estate->es_snapshot to fetch the tuple, because 
+						 * the original tuple we scaned may be updated by other transaction when we want to update
+						 * it. And ExecUpdate will use EPQ to find the new version, which may not visible for 
+						 * estate->es_snapshot.
+						 * So, we use the SNAPSHOT_NOW snapshot, which works in both scenarios(see SNAPSHOT_NOW for its senmmatic).
+						 */
+						InitNowSnapshot(snapshotNow, event->ate_cid1);
+						snapshot = &snapshotNow;
+					}
+
+					if (!table_tuple_fetch_row_version(src_rel, 
+													&(event->ate_ctid1),
+													snapshot,
+													src_slot))
+						elog(ERROR, "failed to fetch tuple1 for AFTER trigger");
+				}
+#else
 				if (!table_tuple_fetch_row_version(src_rel,
 												   &(event->ate_ctid1),
 												   SnapshotAny,
 												   src_slot))
 					elog(ERROR, "failed to fetch tuple1 for AFTER trigger");
+#endif
 
 				/*
 				 * Store the tuple fetched from the source partition into the
@@ -5090,6 +5206,9 @@ AfterTriggerBeginXact(void)
 	Assert(afterTriggers.events.head == NULL);
 	Assert(afterTriggers.trans_stack == NULL);
 	Assert(afterTriggers.maxtransdepth == 0);
+#ifdef USE_XSTORE
+	Assert(afterTriggers.derfer_trigger_fired == false);
+#endif
 }
 
 
@@ -5300,7 +5419,9 @@ AfterTriggerFireDeferred(void)
 		PushActiveSnapshot(GetTransactionSnapshot());
 		snap_pushed = true;
 	}
-
+#ifdef USE_XSTORE
+	afterTriggers.derfer_trigger_fired = true;
+#endif
 	/*
 	 * Run all the remaining triggers.  Loop until they are all gone, in case
 	 * some trigger queues more for us to do.
@@ -5377,6 +5498,9 @@ AfterTriggerEndXact(bool isCommit)
 
 	/* No more afterTriggers manipulation until next transaction starts. */
 	afterTriggers.query_depth = -1;
+#ifdef USE_XSTORE
+	afterTriggers.derfer_trigger_fired = false;
+#endif
 }
 
 /*
@@ -6260,6 +6384,9 @@ AfterTriggerSaveEvent(EState *estate, ResultRelInfo *relinfo,
 	{
 		case TRIGGER_EVENT_INSERT:
 			tgtype_event = TRIGGER_TYPE_INSERT;
+#ifdef USE_XSTORE
+			new_event.ate_cid1 = InvalidCommandId;
+#endif
 			if (row_trigger)
 			{
 				Assert(oldslot == NULL);
@@ -6285,6 +6412,9 @@ AfterTriggerSaveEvent(EState *estate, ResultRelInfo *relinfo,
 				Assert(newslot == NULL);
 				ItemPointerCopy(&(oldslot->tts_tid), &(new_event.ate_ctid1));
 				ItemPointerSetInvalid(&(new_event.ate_ctid2));
+#ifdef USE_XSTORE
+				new_event.ate_cid1 = estate->es_snapshot->curcid;
+#endif
 			}
 			else
 			{
@@ -6292,6 +6422,9 @@ AfterTriggerSaveEvent(EState *estate, ResultRelInfo *relinfo,
 				Assert(newslot == NULL);
 				ItemPointerSetInvalid(&(new_event.ate_ctid1));
 				ItemPointerSetInvalid(&(new_event.ate_ctid2));
+#ifdef USE_XSTORE
+				new_event.ate_cid1 = InvalidCommandId;
+#endif
 				cancel_prior_stmt_triggers(RelationGetRelid(rel),
 										   CMD_DELETE, event);
 			}
@@ -6304,6 +6437,9 @@ AfterTriggerSaveEvent(EState *estate, ResultRelInfo *relinfo,
 				Assert(newslot != NULL);
 				ItemPointerCopy(&(oldslot->tts_tid), &(new_event.ate_ctid1));
 				ItemPointerCopy(&(newslot->tts_tid), &(new_event.ate_ctid2));
+#ifdef USE_XSTORE
+				new_event.ate_cid1 = estate->es_snapshot->curcid;
+#endif
 
 				/*
 				 * Also remember the OIDs of partitions to fetch these tuples
@@ -6324,6 +6460,9 @@ AfterTriggerSaveEvent(EState *estate, ResultRelInfo *relinfo,
 				Assert(newslot == NULL);
 				ItemPointerSetInvalid(&(new_event.ate_ctid1));
 				ItemPointerSetInvalid(&(new_event.ate_ctid2));
+#ifdef USE_XSTORE
+				new_event.ate_cid1 = InvalidCommandId;
+#endif
 				cancel_prior_stmt_triggers(RelationGetRelid(rel),
 										   CMD_UPDATE, event);
 			}

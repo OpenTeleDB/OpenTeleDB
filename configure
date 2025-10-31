@@ -12,6 +12,8 @@
 # gives unlimited permission to copy, distribute and modify it.
 #
 # Copyright (c) 1996-2024, PostgreSQL Global Development Group
+# Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
+# 
 ## -------------------- ##
 ## M4sh Initialization. ##
 ## -------------------- ##
@@ -706,6 +708,7 @@ LZ4_CFLAGS
 with_lz4
 with_zlib
 with_system_tzdata
+with_xstore
 with_libxslt
 XML2_LIBS
 XML2_CFLAGS
@@ -870,6 +873,7 @@ with_uuid
 with_ossp_uuid
 with_libxml
 with_libxslt
+with_xstore
 with_system_tzdata
 with_zlib
 with_lz4
@@ -1581,6 +1585,7 @@ Optional Packages:
   --with-ossp-uuid        obsolete spelling of --with-uuid=ossp
   --with-libxml           build with XML support
   --with-libxslt          use XSLT support when building contrib/xml2
+  --with-xstore           use xstore support when building contrib/xstore
   --with-system-tzdata=DIR
                           use system time zone data in DIR
   --without-zlib          do not use Zlib
@@ -9062,6 +9067,73 @@ fi
 
 
 
+
+
+#
+# xstore
+#
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking whether to build with xstore storage engine" >&5
+$as_echo_n "checking whether to build with xstore storage engine... " >&6; }
+
+
+
+# Check whether --with-xstore was given.
+if test "${with_xstore+set}" = set; then :
+  withval=$with_xstore;
+  case $withval in
+    yes)
+
+$as_echo "#define USE_XSTORE 1" >>confdefs.h
+
+      ;;
+    no)
+      :
+      ;;
+    *)
+      as_fn_error $? "no argument expected for --with-xstore option" "$LINENO" 5
+      ;;
+  esac
+
+else
+  with_xstore=no
+
+fi
+
+
+
+#
+# xstore
+#
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking whether to build with xstore storage engine" >&5
+$as_echo_n "checking whether to build with xstore storage engine... " >&6; }
+
+
+
+# Check whether --with-xstore was given.
+if test "${with_xstore+set}" = set; then :
+  withval=$with_xstore;
+  case $withval in
+    yes)
+
+$as_echo "#define USE_XSTORE 1" >>confdefs.h
+
+      ;;
+    no)
+      :
+      ;;
+    *)
+      as_fn_error $? "no argument expected for --with-xstore option" "$LINENO" 5
+      ;;
+  esac
+
+else
+  with_xstore=no
+
+fi
+
+
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $with_xstore" >&5
+$as_echo "$with_xstore" >&6; }
 
 
 #

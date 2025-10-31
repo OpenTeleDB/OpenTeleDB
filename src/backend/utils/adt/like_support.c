@@ -23,6 +23,7 @@
  * from LIKE to indexscan limits rather harder than one might think ...
  * but that's the basic idea.)
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -53,6 +54,9 @@
 #include "utils/pg_locale.h"
 #include "utils/selfuncs.h"
 #include "utils/varlena.h"
+#ifdef USE_XSTORE
+#include "access/xstore/xstorehook.h"
+#endif
 
 
 typedef enum
@@ -334,6 +338,18 @@ match_pattern_prefix(Node *leftop,
 				geopr = TextGreaterEqualOperator;
 				collation_aware = true;
 			}
+#ifdef USE_XSTORE
+			if (GlobalXStoreHook.amHook->SameOpfamilyForBtreeAndXBtree != NULL)
+			{
+				if(GlobalXStoreHook.amHook->SameOpfamilyForBtreeAndXBtree(TEXT_PATTERN_BTREE_FAM_OID, opfamily))
+				{
+					eqopr = TextEqualOperator;
+					ltopr = TextPatternLessOperator;
+					geopr = TextPatternGreaterEqualOperator;
+					collation_aware = false;
+				}			
+			}
+#endif
 			rdatatype = TEXTOID;
 			break;
 		case NAMEOID:
@@ -363,6 +379,18 @@ match_pattern_prefix(Node *leftop,
 				geopr = BpcharGreaterEqualOperator;
 				collation_aware = true;
 			}
+#ifdef USE_XSTORE
+			if (GlobalXStoreHook.amHook->SameOpfamilyForBtreeAndXBtree != NULL)
+			{
+				if(GlobalXStoreHook.amHook->SameOpfamilyForBtreeAndXBtree(BPCHAR_PATTERN_BTREE_FAM_OID, opfamily))
+				{
+					eqopr = BpcharEqualOperator;
+					ltopr = BpcharPatternLessOperator;
+					geopr = BpcharPatternGreaterEqualOperator;
+					collation_aware = false;
+				}			
+			}
+#endif
 			rdatatype = BPCHAROID;
 			break;
 		case BYTEAOID:

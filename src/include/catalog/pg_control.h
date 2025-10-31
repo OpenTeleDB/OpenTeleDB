@@ -5,6 +5,7 @@
  *	  However, we define it here so that the format is documented.
  *
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -19,6 +20,9 @@
 #include "access/xlogdefs.h"
 #include "pgtime.h"				/* for pg_time_t */
 #include "port/pg_crc32c.h"
+#ifdef USE_XSTORE
+#include "c.h"
+#endif
 
 
 /* Version identifier for this pg_control format */
@@ -54,7 +58,6 @@ typedef struct CheckPoint
 										 * timestamp */
 	TransactionId newestCommitTsXid;	/* newest Xid with valid commit
 										 * timestamp */
-
 	/*
 	 * Oldest XID still running. This is only needed to initialize hot standby
 	 * mode from an online checkpoint, so we only bother calculating this for
@@ -63,6 +66,37 @@ typedef struct CheckPoint
 	 */
 	TransactionId oldestActiveXid;
 } CheckPoint;
+
+#ifdef USE_XSTORE
+
+typedef struct CheckPointUndoInfo
+{
+	FullTransactionId globalRecycleXid;
+	FullTransactionId globalFrozenXid;
+} CheckPointUndoInfo;
+
+typedef struct CheckPointXMultiInfo
+{
+	/* XStore XMultiXactId was defined in the plugin, we just use FullTransactionId here */
+	FullTransactionId nextXMulti;
+	uint64            nextXMultiOffset;
+} CheckPointXMultiInfo;
+
+/* extend checkpoint struct for more data */
+typedef struct CheckPointExt
+{
+	CheckPoint ori_checkpoint;
+	int32  ext_flags;
+	CheckPointUndoInfo undo_info;
+	CheckPointXMultiInfo xmulti_info;
+} CheckPointExt;
+
+#define  CP_EXT_HAS_UNDO    0x01
+#define  CP_EXT_HAS_XMULTI  0x02
+
+#define CHECKPOINTEXT_BASE_LEN  offsetof(CheckPointExt, undo_info)
+
+#endif
 
 /* XLOG info values for XLOG rmgr */
 #define XLOG_CHECKPOINT_SHUTDOWN		0x00

@@ -3,6 +3,7 @@
  * toast_internals.h
  *	  Internal definitions for the TOAST system.
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Copyright (c) 2000-2024, PostgreSQL Global Development Group
  *
  * src/include/access/toast_internals.h
@@ -44,6 +45,10 @@ typedef struct toast_compress_header
 		((toast_compress_header *) (ptr))->tcinfo = \
 			(len) | ((uint32) (cm_method) << VARLENA_EXTSIZE_BITS); \
 	} while (0)
+
+#ifdef USE_XSTORE
+bool toastid_valueid_exists(Oid toastrelid, Oid valueid);
+#endif
 
 extern Datum toast_compress_datum(Datum value, char cmethod);
 extern Oid	toast_get_valid_index(Oid toastoid, LOCKMODE lock);

@@ -40,6 +40,7 @@
  * themselves, as there could pointers to them in active use.  See
  * smgrrelease() and smgrreleaseall().
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -60,7 +61,7 @@
 #include "utils/hsearch.h"
 #include "utils/inval.h"
 
-
+#ifndef USE_XSTORE
 /*
  * This struct of function pointers defines the API between smgr.c and
  * any individual storage manager module.  Note that smgr subfunctions are
@@ -103,8 +104,15 @@ typedef struct f_smgr
 	void		(*smgr_immedsync) (SMgrRelation reln, ForkNumber forknum);
 	void		(*smgr_registersync) (SMgrRelation reln, ForkNumber forknum);
 } f_smgr;
+#endif
 
+#ifdef USE_XSTORE
+#define SM_MAX_ID  255
+
+f_smgr smgrsw[SM_MAX_ID] = {
+#else
 static const f_smgr smgrsw[] = {
+#endif
 	/* magnetic disk */
 	{
 		.smgr_init = mdinit,
@@ -124,10 +132,16 @@ static const f_smgr smgrsw[] = {
 		.smgr_truncate = mdtruncate,
 		.smgr_immedsync = mdimmedsync,
 		.smgr_registersync = mdregistersync,
+#ifdef USE_XSTORE
+		.smgr_is_own = NULL,
+#endif
 	}
 };
-
+#ifdef USE_XSTORE
+static int NSmgr = 1;  // default 1, register incread
+#else 
 static const int NSmgr = lengthof(smgrsw);
+#endif
 
 /*
  * Each backend has a hashtable that stores all extant SMgrRelation objects.
@@ -140,6 +154,19 @@ static dlist_head unpinned_relns;
 /* local function prototypes */
 static void smgrshutdown(int code, Datum arg);
 static void smgrdestroy(SMgrRelation reln);
+
+#ifdef USE_XSTORE
+int RegisterCustomSmgr(f_smgr *fsmgr)
+{
+	int pos=NSmgr;
+	if(pos>=SM_MAX_ID) {
+		return -1;
+	}
+	NSmgr++;
+	smgrsw[pos] = *fsmgr;
+	return pos;
+}
+#endif
 
 
 /*
@@ -225,11 +252,26 @@ smgropen(RelFileLocator rlocator, ProcNumber backend)
 	/* Initialize it if not present before */
 	if (!found)
 	{
+#ifdef USE_XSTORE
+		int smgr_which =0; // default use md smgr
+#endif
 		/* hash_search already filled in the lookup key */
 		reln->smgr_targblock = InvalidBlockNumber;
 		for (int i = 0; i <= MAX_FORKNUM; ++i)
 			reln->smgr_cached_nblocks[i] = InvalidBlockNumber;
+#ifdef USE_XSTORE
+		for(int i=NSmgr;i>=0;--i) 
+		{
+			if(smgrsw[i].smgr_is_own) 
+			{
+				if(smgrsw[i].smgr_is_own(rlocator))
+					smgr_which = i;
+			}
+		}
+		reln->smgr_which = smgr_which;
+#else
 		reln->smgr_which = 0;	/* we only have md.c at present */
+#endif
 
 		/* it is not pinned yet */
 		reln->pincount = 0;

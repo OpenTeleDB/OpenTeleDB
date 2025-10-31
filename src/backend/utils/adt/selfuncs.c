@@ -10,6 +10,7 @@
  *	  Index cost functions are located via the index AM's API struct,
  *	  which is obtained from the handler function registered in pg_am.
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -141,6 +142,9 @@
 #include "utils/syscache.h"
 #include "utils/timestamp.h"
 #include "utils/typcache.h"
+#ifdef USE_XSTORE
+#include "access/xstore/xstorehook.h"
+#endif
 
 #define DEFAULT_PAGE_CPU_MULTIPLIER 50.0
 
@@ -6177,7 +6181,11 @@ get_actual_variable_range(PlannerInfo *root, VariableStatData *vardata,
 		ScanDirection indexscandir;
 
 		/* Ignore non-btree indexes */
+#ifdef USE_XSTORE
+		if (index->relam != BTREE_AM_OID && !OidIsXBTree(index->relam))
+#else
 		if (index->relam != BTREE_AM_OID)
+#endif
 			continue;
 
 		/*
@@ -6409,10 +6417,17 @@ get_actual_variable_endpoint(Relation heapRel,
 	while ((tid = index_getnext_tid(index_scan, indexscandir)) != NULL)
 	{
 		BlockNumber block = ItemPointerGetBlockNumber(tid);
-
+	
+#ifdef USE_XSTORE
+		if (!IndexIsXBTree(indexRel) && 
+			(!VM_ALL_VISIBLE(heapRel,
+							 block,
+							 &vmbuffer)))
+#else
 		if (!VM_ALL_VISIBLE(heapRel,
 							block,
 							&vmbuffer))
+#endif
 		{
 			/* Rats, we have to visit the heap to check visibility */
 			if (!index_fetch_heap(index_scan, tableslot))

@@ -758,6 +758,10 @@
 /* Define to select Win32-style shared memory. */
 #undef USE_WIN32_SHARED_MEMORY
 
+/* Define to 1 to use xstore support when building contrib/xstore.
+   (--with-xstore) */
+#undef USE_XSTORE
+
 /* Define to 1 to build with ZSTD support. (--with-zstd) */
 #undef USE_ZSTD
 

@@ -4,6 +4,7 @@
  *	  header file for postgres vacuum cleaner and statistics analyzer
  *
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -15,6 +16,7 @@
 #define VACUUM_H
 
 #include "access/htup.h"
+#include "access/transam.h"
 #include "access/genam.h"
 #include "access/parallel.h"
 #include "access/tidstore.h"
@@ -25,6 +27,11 @@
 #include "storage/buf.h"
 #include "storage/lock.h"
 #include "utils/relcache.h"
+#ifdef USE_XSTORE
+#include "access/transam.h"
+#include "utils/snapmgr.h"
+#endif
+
 
 /*
  * Flags for amparallelvacuumoptions to control the participation of bulkdelete
@@ -266,7 +273,10 @@ struct VacuumCutoffs
 	 */
 	TransactionId OldestXmin;
 	MultiXactId OldestMxact;
-
+#ifdef USE_XSTORE
+	/* Epoch of OldestXmin. for Xstore */
+	uint32		  epoch;
+#endif
 	/*
 	 * FreezeLimit is the Xid below which all Xids are definitely frozen or
 	 * removed in pages VACUUM scans and cleanup locks.
@@ -287,6 +297,105 @@ typedef struct VacDeadItemsInfo
 	size_t		max_bytes;		/* the maximum bytes TidStore can use */
 	int64		num_items;		/* current # of entries */
 } VacDeadItemsInfo;
+
+
+#ifdef USE_XSTORE
+/* Phases of vacuum during which we report error context. */
+typedef enum
+{
+	VACUUM_ERRCB_PHASE_UNKNOWN,
+	VACUUM_ERRCB_PHASE_SCAN_HEAP,
+	VACUUM_ERRCB_PHASE_VACUUM_INDEX,
+	VACUUM_ERRCB_PHASE_VACUUM_HEAP,
+	VACUUM_ERRCB_PHASE_INDEX_CLEANUP,
+	VACUUM_ERRCB_PHASE_TRUNCATE,
+} VacErrPhase;
+
+typedef struct LVRelState
+{
+	/* Target heap relation and its indexes */
+	Relation	rel;
+	Relation   *indrels;
+	int			nindexes;
+
+	/* Buffer access strategy and parallel vacuum state */
+	BufferAccessStrategy bstrategy;
+	ParallelVacuumState *pvs;
+
+	/* Aggressive VACUUM? (must set relfrozenxid >= FreezeLimit) */
+	bool		aggressive;
+	/* Use visibility map to skip? (disabled by DISABLE_PAGE_SKIPPING) */
+	bool		skipwithvm;
+	/* Consider index vacuuming bypass optimization? */
+	bool		consider_bypass_optimization;
+
+	/* Doing index vacuuming, index cleanup, rel truncation? */
+	bool		do_index_vacuuming;
+	bool		do_index_cleanup;
+	bool		do_rel_truncate;
+
+	/* VACUUM operation's cutoffs for freezing and pruning */
+	struct VacuumCutoffs cutoffs;
+	GlobalVisState *vistest;
+	/* Tracks oldest extant XID/MXID for setting relfrozenxid/relminmxid */
+	TransactionId NewRelfrozenXid;
+	MultiXactId NewRelminMxid;
+	bool		skippedallvis;
+
+	/* Error reporting state */
+	char	   *dbname;
+	char	   *relnamespace;
+	char	   *relname;
+	char	   *indname;		/* Current index name */
+	BlockNumber blkno;			/* used only for heap operations */
+	OffsetNumber offnum;		/* used only for heap operations */
+	VacErrPhase phase;
+	bool		verbose;		/* VACUUM VERBOSE? */
+
+	/*
+	 * dead_items stores TIDs whose index tuples are deleted by index
+	 * vacuuming. Each TID points to an LP_DEAD line pointer from a heap page
+	 * that has been processed by lazy_scan_prune.  Also needed by
+	 * lazy_vacuum_heap_rel, which marks the same LP_DEAD line pointers as
+	 * LP_UNUSED during second heap pass.
+	 *
+	 * Both dead_items and dead_items_info are allocated in shared memory in
+	 * parallel vacuum cases.
+	 */
+	TidStore   *dead_items;		/* TIDs whose index tuples we'll delete */
+	VacDeadItemsInfo *dead_items_info;
+
+	BlockNumber rel_pages;		/* total number of pages */
+	BlockNumber scanned_pages;	/* # pages examined (not skipped via VM) */
+	BlockNumber removed_pages;	/* # pages removed by relation truncation */
+	BlockNumber frozen_pages;	/* # pages with newly frozen tuples */
+	BlockNumber lpdead_item_pages;	/* # pages with LP_DEAD items */
+	BlockNumber missed_dead_pages;	/* # pages with missed dead tuples */
+	BlockNumber nonempty_pages; /* actually, last nonempty page + 1 */
+
+	/* Statistics output by us, for table */
+	double		new_rel_tuples; /* new estimated total # of tuples */
+	double		new_live_tuples;	/* new estimated total # of live tuples */
+	/* Statistics output by index AMs */
+	IndexBulkDeleteResult **indstats;
+
+	/* Instrumentation counters */
+	int			num_index_scans;
+	/* Counters that follow are only for scanned_pages */
+	int64		tuples_deleted; /* # deleted from table */
+	int64		tuples_frozen;	/* # newly frozen */
+	int64		lpdead_items;	/* # deleted from indexes */
+	int64		live_tuples;	/* # live tuples remaining */
+	int64		recently_dead_tuples;	/* # dead, but not yet removable */
+	int64		missed_dead_tuples; /* # removable, but not removed */
+
+	/* State maintained by heap_vac_scan_next_block() */
+	BlockNumber current_block;	/* last block returned */
+	BlockNumber next_unskippable_block; /* next unskippable block */
+	bool		next_unskippable_allvis;	/* its visibility status */
+	Buffer		next_unskippable_vmbuffer;	/* buffer containing its VM bit */
+} LVRelState;
+#endif
 
 /* GUC parameters */
 extern PGDLLIMPORT int default_statistics_target;	/* PGDLLIMPORT for PostGIS */
@@ -384,5 +493,11 @@ extern bool std_typanalyze(VacAttrStats *stats);
 extern double anl_random_fract(void);
 extern double anl_init_selection_state(int n);
 extern double anl_get_next_S(double t, int n, double *stateptr);
-
+#ifdef USE_XSTORE
+extern void vacuum_error_callback(void *arg);
+extern void update_relstats_all_indexes(LVRelState *vacrel);
+extern void lazy_cleanup_all_indexes(LVRelState *vacrel);
+extern bool lazy_vacuum_all_indexes(LVRelState *vacrel);
+extern void dead_items_alloc(LVRelState *vacrel, int nworkers);
+#endif
 #endif							/* VACUUM_H */

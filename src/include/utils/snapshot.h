@@ -3,6 +3,7 @@
  * snapshot.h
  *	  POSTGRES snapshot definition
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -48,6 +49,47 @@ typedef enum SnapshotType
 	 * -------------------------------------------------------------------------
 	 */
 	SNAPSHOT_MVCC = 0,
+
+#ifdef USE_XSTORE
+	/* -------------------------------------------------------------------------
+	 * A tuple is visible iff heap tuple is valid "itself".
+	 *
+	 * Here, we consider the effects of:
+	 * - all committed transactions (as of the current instant)
+	 * - changes of this transaction
+	 *
+	 * Does _not_ include:
+	 * - in-progress transactions (as of the current instant)
+	 * -------------------------------------------------------------------------
+	 */
+	SNAPSHOT_SELF_TRANSACTION,
+
+	/* -------------------------------------------------------------------------
+     * A tuple is visible iff heap tuple is valid "now".
+     *
+     * Here, we consider the effects of:
+     * - all committed transactions (as of the current instant)
+     * - previous commands of this transaction
+     *
+     * Does _not_ include:
+     * - changes made by the current command.
+     * -------------------------------------------------------------------------
+     */
+	SNAPSHOT_NOW,
+
+	/* -------------------------------------------------------------------------
+	 * A tuple is visible iff heap tuple is valid "not self".
+	 *
+	 * Here, we consider the effects of:
+	 * - all committed transactions (as of the current instant)
+	 *
+	 * Does _not_ include:
+	 * - changes of this transaction
+	 * - in-progress transactions (as of the current instant)
+	 * -------------------------------------------------------------------------
+	 */
+	SNAPSHOT_NOT_SELF,
+#endif
 
 	/*-------------------------------------------------------------------------
 	 * A tuple is visible iff the tuple is valid "for itself".

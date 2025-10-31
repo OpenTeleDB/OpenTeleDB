@@ -1065,6 +1065,15 @@ PGAC_ARG_BOOL(with, libxslt, no, [use XSLT support when building contrib/xml2],
 AC_SUBST(with_libxslt)
 
 #
+# xstore
+#
+AC_MSG_CHECKING([whether to build with xstore storage engine])
+PGAC_ARG_BOOL(with, xstore, no, [use xstore support when building contrib/xstore],
+              [AC_DEFINE([USE_XSTORE], 1, [Define to 1 to use xstore support when building contrib/xstore. (--with-xstore)])])
+AC_MSG_RESULT([$with_xstore])
+AC_SUBST(with_xstore)
+
+#
 # tzdata
 #
 PGAC_ARG_REQ(with, system-tzdata,

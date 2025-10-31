@@ -4,6 +4,7 @@
  *	  POSTGRES generalized index access method definitions.
  *
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -13,6 +14,8 @@
  */
 #ifndef GENAM_H
 #define GENAM_H
+
+#include "postgres.h"
 
 #include "access/sdir.h"
 #include "access/skey.h"
@@ -149,6 +152,11 @@ extern bool index_insert(Relation indexRelation,
 						 IndexUniqueCheck checkUnique,
 						 bool indexUnchanged,
 						 struct IndexInfo *indexInfo);
+#ifdef USE_XSTORE
+extern bool 
+index_delete(Relation indexRelation, Datum *values, bool *isnull, ItemPointer heap_t_ctid, bool is_dead);
+#endif
+
 extern void index_insert_cleanup(Relation indexRelation,
 								 struct IndexInfo *indexInfo);
 
@@ -180,6 +188,9 @@ struct TupleTableSlot;
 extern bool index_fetch_heap(IndexScanDesc scan, struct TupleTableSlot *slot);
 extern bool index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
 							   struct TupleTableSlot *slot);
+#ifdef USE_XSTORE
+bool RecheckIndexTuple(const IndexScanDesc scan, struct TupleTableSlot *slot);
+#endif
 extern int64 index_getbitmap(IndexScanDesc scan, TIDBitmap *bitmap);
 
 extern IndexBulkDeleteResult *index_bulk_delete(IndexVacuumInfo *info,

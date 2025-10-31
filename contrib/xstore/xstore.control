@@ -1,0 +1,5 @@
+# xstore extension
+comment = 'xstore -- the in-place update storage engine'
+default_version = '1.0'
+module_pathname = '$libdir/xstore'
+relocatable = true

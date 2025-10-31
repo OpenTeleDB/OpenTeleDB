@@ -3,6 +3,7 @@
  * detoast.h
  *	  Access to compressed and external varlena values.
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Copyright (c) 2000-2024, PostgreSQL Global Development Group
  *
  * src/include/access/detoast.h
@@ -78,5 +79,16 @@ extern Size toast_raw_datum_size(Datum value);
  * ----------
  */
 extern Size toast_datum_size(Datum value);
+
+#ifdef USE_XSTORE
+/* ----------
+ * toast_fetch_datum -
+ *
+ *	Reconstruct an in memory Datum from the chunks saved
+ *	in the toast relation
+ * ----------
+ */
+extern struct varlena *toast_fetch_datum(struct varlena *attr);
+#endif
 
 #endif							/* DETOAST_H */

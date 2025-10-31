@@ -35,6 +35,7 @@
  * stack is empty.
  *
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -83,6 +84,10 @@ static SnapshotData SecondarySnapshotData = {SNAPSHOT_MVCC};
 SnapshotData CatalogSnapshotData = {SNAPSHOT_MVCC};
 SnapshotData SnapshotSelfData = {SNAPSHOT_SELF};
 SnapshotData SnapshotAnyData = {SNAPSHOT_ANY};
+#ifdef USE_XSTORE
+SnapshotData SnapshotSelfTransactionData = {SNAPSHOT_SELF_TRANSACTION};
+SnapshotData SnapshotNotSelfData = {SNAPSHOT_NOT_SELF};
+#endif
 
 /* Pointers to valid snapshots */
 static Snapshot CurrentSnapshot = NULL;

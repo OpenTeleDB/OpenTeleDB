@@ -7,6 +7,7 @@
  * the nature and use of path keys.
  *
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -18,6 +19,9 @@
 #include "postgres.h"
 
 #include "access/stratnum.h"
+#ifdef USE_XSTORE
+#include "access/xstore/xstorehook.h"
+#endif
 #include "catalog/pg_opfamily.h"
 #include "nodes/nodeFuncs.h"
 #include "optimizer/cost.h"
@@ -290,6 +294,43 @@ make_pathkey_from_sortop(PlannerInfo *root,
  *		PATHKEY COMPARISONS
  ****************************************************************************/
 
+#ifdef USE_XSTORE
+/*
+ * pathkey_opfamily_equal
+ * 		compare opfamily between btree and xbtree
+ */
+bool
+pathkey_opfamily_equal(PathKey *key1, PathKey *key2)
+{
+	if (key1->pk_opfamily == key2->pk_opfamily)
+		return true;
+
+	if (GlobalXStoreHook.amHook->SameOpfamilyForBtreeAndXBtree != NULL)
+		return GlobalXStoreHook.amHook->SameOpfamilyForBtreeAndXBtree(key1->pk_opfamily, key2->pk_opfamily);
+
+	return false;
+}
+
+/*
+ * pathkey_equal
+ *     Returns true if key1==key2, and compare the opfamily between btree and xbtree.
+ */
+static bool
+pathkey_equal(PathKey *key1, PathKey *key2)
+{
+	if (key1 == key2)
+		return true;
+
+	if (key1->pk_eclass != key2->pk_eclass ||
+		key1->type != key2->type ||
+		key1->pk_nulls_first != key2->pk_nulls_first ||
+		key1->pk_strategy != key2->pk_strategy)
+		return false;
+
+	return pathkey_opfamily_equal(key1, key2);
+}
+#endif
+
 /*
  * compare_pathkeys
  *	  Compare two pathkeys to see if they are equivalent, and if not whether
@@ -317,7 +358,11 @@ compare_pathkeys(List *keys1, List *keys2)
 		PathKey    *pathkey1 = (PathKey *) lfirst(key1);
 		PathKey    *pathkey2 = (PathKey *) lfirst(key2);
 
+#ifdef USE_XSTORE
+		if (!pathkey_equal(pathkey1, pathkey2))
+#else
 		if (pathkey1 != pathkey2)
+#endif
 			return PATHKEYS_DIFFERENT;	/* no need to keep looking */
 	}
 
@@ -588,7 +633,11 @@ pathkeys_count_contained_in(List *keys1, List *keys2, int *n_common)
 		PathKey    *pathkey1 = (PathKey *) lfirst(key1);
 		PathKey    *pathkey2 = (PathKey *) lfirst(key2);
 
+#ifdef USE_XSTORE
+		if (!pathkey_equal(pathkey1, pathkey2))
+#else
 		if (pathkey1 != pathkey2)
+#endif
 		{
 			*n_common = n;
 			return false;
@@ -2106,7 +2155,11 @@ right_merge_direction(PlannerInfo *root, PathKey *pathkey)
 		PathKey    *query_pathkey = (PathKey *) lfirst(l);
 
 		if (pathkey->pk_eclass == query_pathkey->pk_eclass &&
+#ifdef USE_XSTORE
+			pathkey_opfamily_equal(pathkey, query_pathkey))
+#else
 			pathkey->pk_opfamily == query_pathkey->pk_opfamily)
+#endif
 		{
 			/*
 			 * Found a matching query sort column.  Prefer this pathkey's

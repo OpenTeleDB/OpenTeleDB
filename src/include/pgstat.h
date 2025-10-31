@@ -3,6 +3,7 @@
  *
  *	Definitions for the PostgreSQL cumulative statistics system.
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  *	Copyright (c) 2001-2024, PostgreSQL Global Development Group
  *
  *	src/include/pgstat.h
@@ -12,6 +13,9 @@
 #define PGSTAT_H
 
 #include "datatype/timestamp.h"
+#ifdef USE_XSTORE
+#include "port/atomics.h"
+#endif
 #include "portability/instr_time.h"
 #include "postmaster/pgarch.h"	/* for MAX_XFN_CHARS */
 #include "utils/backend_progress.h" /* for backward compatibility */
@@ -201,6 +205,26 @@ typedef struct PgStat_TableStatus
 	struct PgStat_TableXactStatus *trans;	/* lowest subxact's counts */
 	PgStat_TableCounts counts;	/* event counts to be sent */
 	Relation	relation;		/* rel that is using this entry */
+#ifdef USE_XSTORE
+	bool is_xstore;
+	/*
+     * The global statistics has been checked.
+     * We should do it once per transaction for perf reasons.
+     * Nice to have: might need to add an expiry for long running transactions.
+     */
+    bool t_globalStatChecked;
+
+	/* snapshot deadtuples % */
+	float4 t_freeRatio;
+	float4 t_pruneSuccessRatio;
+
+		/*
+     * Pointer to the starting_blocks array and the current index
+     * in the array we're currently traversing.
+     */
+    pg_atomic_uint32 *startBlockArray;
+    uint32 startBlockIndex;
+#endif
 } PgStat_TableStatus;
 
 /* ----------
@@ -417,6 +441,11 @@ typedef struct PgStat_StatTabEntry
 
 	PgStat_Counter blocks_fetched;
 	PgStat_Counter blocks_hit;
+
+#ifdef USE_XSTORE
+	PgStat_Counter success_prune_cnt;
+	PgStat_Counter total_prune_cnt;
+#endif
 
 	TimestampTz last_vacuum_time;	/* user initiated vacuum */
 	PgStat_Counter vacuum_count;

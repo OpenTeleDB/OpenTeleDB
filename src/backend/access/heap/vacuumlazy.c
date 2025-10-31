@@ -20,6 +20,7 @@
  * that there only needs to be one call to lazy_vacuum, after the initial pass
  * completes.
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -122,6 +123,7 @@
  */
 #define ParallelVacuumIsActive(vacrel) ((vacrel)->pvs != NULL)
 
+#ifndef USE_XSTORE
 /* Phases of vacuum during which we report error context. */
 typedef enum
 {
@@ -217,6 +219,7 @@ typedef struct LVRelState
 	bool		next_unskippable_allvis;	/* its visibility status */
 	Buffer		next_unskippable_vmbuffer;	/* buffer containing its VM bit */
 } LVRelState;
+#endif
 
 /* Struct for saving and restoring vacuum error information. */
 typedef struct LVSavedErrInfo
@@ -243,13 +246,17 @@ static bool lazy_scan_noprune(LVRelState *vacrel, Buffer buf,
 							  BlockNumber blkno, Page page,
 							  bool *has_lpdead_items);
 static void lazy_vacuum(LVRelState *vacrel);
+#ifndef USE_XSTORE
 static bool lazy_vacuum_all_indexes(LVRelState *vacrel);
+#endif
 static void lazy_vacuum_heap_rel(LVRelState *vacrel);
 static void lazy_vacuum_heap_page(LVRelState *vacrel, BlockNumber blkno,
 								  Buffer buffer, OffsetNumber *deadoffsets,
 								  int num_offsets, Buffer vmbuffer);
 static bool lazy_check_wraparound_failsafe(LVRelState *vacrel);
+#ifndef USE_XSTORE
 static void lazy_cleanup_all_indexes(LVRelState *vacrel);
+#endif
 static IndexBulkDeleteResult *lazy_vacuum_one_index(Relation indrel,
 													IndexBulkDeleteResult *istat,
 													double reltuples,
@@ -263,15 +270,19 @@ static bool should_attempt_truncation(LVRelState *vacrel);
 static void lazy_truncate_heap(LVRelState *vacrel);
 static BlockNumber count_nondeletable_pages(LVRelState *vacrel,
 											bool *lock_waiter_detected);
+#ifndef USE_XSTORE
 static void dead_items_alloc(LVRelState *vacrel, int nworkers);
+#endif
 static void dead_items_add(LVRelState *vacrel, BlockNumber blkno, OffsetNumber *offsets,
 						   int num_offsets);
 static void dead_items_reset(LVRelState *vacrel);
 static void dead_items_cleanup(LVRelState *vacrel);
 static bool heap_page_is_all_visible(LVRelState *vacrel, Buffer buf,
 									 TransactionId *visibility_cutoff_xid, bool *all_frozen);
+#ifndef USE_XSTORE
 static void update_relstats_all_indexes(LVRelState *vacrel);
 static void vacuum_error_callback(void *arg);
+#endif
 static void update_vacuum_error_info(LVRelState *vacrel,
 									 LVSavedErrInfo *saved_vacrel,
 									 int phase, BlockNumber blkno,
@@ -1986,7 +1997,11 @@ lazy_vacuum(LVRelState *vacrel)
  * VACUUM operation is at risk of taking too long to finish, leading to
  * wraparound failure.
  */
+#ifdef USE_XSTORE
+bool
+#else
 static bool
+#endif
 lazy_vacuum_all_indexes(LVRelState *vacrel)
 {
 	bool		allindexes = true;
@@ -2349,7 +2364,11 @@ lazy_check_wraparound_failsafe(LVRelState *vacrel)
 /*
  *	lazy_cleanup_all_indexes() -- cleanup all indexes of relation.
  */
+#ifdef USE_XSTORE
+void
+#else
 static void
+#endif
 lazy_cleanup_all_indexes(LVRelState *vacrel)
 {
 	double		reltuples = vacrel->new_rel_tuples;
@@ -2819,7 +2838,11 @@ count_nondeletable_pages(LVRelState *vacrel, bool *lock_waiter_detected)
  * Also handles parallel initialization as part of allocating dead_items in
  * DSM when required.
  */
+#ifdef USE_XSTORE
+void
+#else
 static void
+#endif
 dead_items_alloc(LVRelState *vacrel, int nworkers)
 {
 	VacDeadItemsInfo *dead_items_info;
@@ -3067,7 +3090,11 @@ heap_page_is_all_visible(LVRelState *vacrel, Buffer buf,
 /*
  * Update index statistics in pg_class if the statistics are accurate.
  */
+#ifdef USE_XSTORE
+void
+#else
 static void
+#endif
 update_relstats_all_indexes(LVRelState *vacrel)
 {
 	Relation   *indrels = vacrel->indrels;
@@ -3102,7 +3129,11 @@ update_relstats_all_indexes(LVRelState *vacrel)
  * vacuum.  If you change this function for those phases, change
  * parallel_vacuum_error_callback() as well.
  */
+#ifdef USE_XSTORE
+void
+#else
 static void
+#endif
 vacuum_error_callback(void *arg)
 {
 	LVRelState *errinfo = arg;

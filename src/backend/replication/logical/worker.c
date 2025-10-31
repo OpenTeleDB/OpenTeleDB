@@ -2,6 +2,7 @@
  * worker.c
  *	   PostgreSQL logical replication worker (apply)
  *
+ * Portions Copyright (c) 2024-2025 Tianyi Cloud Technology Co., Ltd
  * Copyright (c) 2016-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
@@ -191,6 +192,9 @@
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
 #include "utils/usercontext.h"
+#ifdef USE_XSTORE
+#include "access/xstore/xstorehook.h"
+#endif
 
 #define NAPTIME_PER_CYCLE 1000	/* max sleep time between cycles (1s) */
 
@@ -2662,6 +2666,15 @@ apply_handle_update_internal(ApplyExecutionData *edata,
 									localindexoid,
 									remoteslot, &localslot);
 	ExecClearTuple(remoteslot);
+
+#ifdef USE_XSTORE
+    if(RelationIsXstoreTable(localrel))
+	{ // xstore table should use TTSOpsXHeapTuple slot
+		remoteslot = ExecInitExtraTupleSlot(estate,
+										RelationGetDescr(localrel),
+										table_slot_callbacks(localrel));
+	}
+#endif
 
 	/*
 	 * Tuple found.
