@@ -1,0 +1,338 @@
+CREATE EXTENSION query_check;
+select load_query_check();
+ load_query_check 
+------------------
+ t
+(1 row)
+
+SELECT set_config(name, 'on', null) from pg_settings where name = 'query_check.enabled';
+ set_config 
+------------
+ on
+(1 row)
+
+drop table if exists users;
+NOTICE:  table "users" does not exist, skipping
+create table users(username text, email text);
+insert into users values ('alice', 'alice@example.com');
+insert into users values ('bob', 'bob@example.com');
+insert into users values ('charlie', 'charlie@example.com');
+--
+-- session context (needs to be executed in the master node)
+--
+-- case1: create/drop temp table
+CREATE TEMP TABLE temp_test(a int, b text);
+NOTICE: xproxy create temp table temp_test
+CREATE TEMP TABLE temp_users AS SELECT * FROM users;
+NOTICE: xproxy create temp table temp_users
+DROP TABLE temp_test;
+NOTICE: xproxy drop temp table temp_test
+DROP TABLE temp_users;
+NOTICE: xproxy drop temp table temp_users
+-- case2: prepare staement
+PREPARE stmt1 (text, text) AS INSERT INTO users VALUES ($1, $2);
+NOTICE: xproxy prepare stmt stmt1
+EXECUTE stmt1 ('Alice', 'alice@example.com');
+DEALLOCATE PREPARE stmt1;
+NOTICE: xproxy deallocate stmt stmt1
+PREPARE stmt2 (text) AS SELECT * FROM users WHERE username = $1;
+NOTICE: xproxy prepare stmt stmt2
+EXECUTE stmt2 ('Alice');
+ username |       email       
+----------+-------------------
+ Alice    | alice@example.com
+(1 row)
+
+DEALLOCATE PREPARE stmt2;
+NOTICE: xproxy deallocate stmt stmt2
+DEALLOCATE PREPARE stmt3;
+ERROR:  prepared statement "stmt3" does not exist
+-- case3: set guc parmeters
+SET client_min_messages TO ERROR;
+NOTICE: xproxy set variable client_min_messages to 'error'
+-- case4: utility statement in function/procedure
+DROP FUNCTION IF EXISTS test_func;
+CREATE OR REPLACE FUNCTION test_func() RETURNS VOID AS $$
+BEGIN
+    CREATE TEMP TABLE temp_test(a int, b text);
+    CREATE TEMP TABLE temp_users AS SELECT * FROM users;
+
+    PREPARE stmt1 (text, text) AS INSERT INTO users VALUES ($1, $2);
+    EXECUTE 'EXECUTE stmt1 (''Alice'', ''alice@example.com'')';
+    DEALLOCATE PREPARE stmt1;
+
+    PREPARE stmt2 (text) AS SELECT * FROM temp_users WHERE username = $1;
+    EXECUTE 'EXECUTE stmt2 (''Alice'')';
+    DEALLOCATE PREPARE stmt2;
+
+    SET client_min_messages TO ERROR;
+    DROP TABLE temp_test;
+    DROP TABLE temp_users;
+END;
+$$ LANGUAGE plpgsql;
+SELECT test_func();
+NOTICE: xproxy create temp table temp_test
+NOTICE: xproxy create temp table temp_users
+NOTICE: xproxy set variable client_min_messages to 'error'
+NOTICE: xproxy drop temp table temp_test
+NOTICE: xproxy drop temp table temp_users
+NOTICE: xproxy prepare stmt stmt1
+NOTICE: xproxy deallocate stmt stmt1
+NOTICE: xproxy prepare stmt stmt2
+NOTICE: xproxy deallocate stmt stmt2
+ test_func 
+-----------
+ 
+(1 row)
+
+DROP PROCEDURE IF EXISTS test_proc;
+CREATE OR REPLACE PROCEDURE test_proc()
+AS $$
+BEGIN
+    CREATE TEMP TABLE temp_test(a int, b text);
+    CREATE TEMP TABLE temp_users AS SELECT * FROM users;
+
+    PREPARE stmt1 (text, text) AS INSERT INTO users VALUES ($1, $2);
+    EXECUTE 'EXECUTE stmt1 (''Alice'', ''alice@example.com'')';
+    DEALLOCATE PREPARE stmt1;
+
+    PREPARE stmt2 (text) AS SELECT * FROM temp_users WHERE username = $1;
+    EXECUTE 'EXECUTE stmt2 (''Alice'')';
+    DEALLOCATE PREPARE stmt2;
+
+    SET client_min_messages TO ERROR;
+    DROP TABLE temp_test;
+    DROP TABLE temp_users;
+END;
+$$ LANGUAGE plpgsql;
+CALL test_proc();
+NOTICE: xproxy create temp table temp_test
+NOTICE: xproxy create temp table temp_users
+NOTICE: xproxy set variable client_min_messages to 'error'
+NOTICE: xproxy drop temp table temp_test
+NOTICE: xproxy drop temp table temp_users
+NOTICE: xproxy prepare stmt stmt1
+NOTICE: xproxy deallocate stmt stmt1
+NOTICE: xproxy prepare stmt stmt2
+NOTICE: xproxy deallocate stmt stmt2
+-- case5: utility statement in transaction block
+BEGIN;
+CREATE TEMP TABLE temp_test(a int, b text);
+CREATE TEMP TABLE temp_users AS SELECT * FROM users;
+PREPARE stmt1 (text, text) AS INSERT INTO users VALUES ($1, $2);
+EXECUTE stmt1 ('Alice', 'alice@example.com');
+DEALLOCATE PREPARE stmt1;
+PREPARE stmt2 (text) AS SELECT * FROM temp_users WHERE username = $1;
+EXECUTE stmt2 ('Alice');
+ username |       email       
+----------+-------------------
+ Alice    | alice@example.com
+ Alice    | alice@example.com
+ Alice    | alice@example.com
+(3 rows)
+
+DEALLOCATE PREPARE stmt2;
+SET client_min_messages TO ERROR;
+DROP TABLE temp_test;
+DROP TABLE temp_users;
+COMMIT;
+NOTICE: xproxy create temp table temp_test
+NOTICE: xproxy create temp table temp_users
+NOTICE: xproxy set variable client_min_messages to 'error'
+NOTICE: xproxy drop temp table temp_test
+NOTICE: xproxy drop temp table temp_users
+NOTICE: xproxy prepare stmt stmt1
+NOTICE: xproxy deallocate stmt stmt1
+NOTICE: xproxy prepare stmt stmt2
+NOTICE: xproxy deallocate stmt stmt2
+BEGIN;
+CREATE TEMP TABLE temp_test(a int, b text);
+CREATE TEMP TABLE temp_users AS SELECT * FROM users;
+PREPARE stmt1 (text, text) AS INSERT INTO users VALUES ($1, $2);
+EXECUTE stmt1 ('Alice', 'alice@example.com');
+DEALLOCATE PREPARE stmt1;
+PREPARE stmt2 (text) AS SELECT * FROM temp_users WHERE username = $1;
+EXECUTE stmt2 ('Alice');
+ username |       email       
+----------+-------------------
+ Alice    | alice@example.com
+ Alice    | alice@example.com
+ Alice    | alice@example.com
+ Alice    | alice@example.com
+(4 rows)
+
+DEALLOCATE PREPARE stmt2;
+SET client_min_messages TO ERROR;
+DROP TABLE temp_test;
+DROP TABLE temp_users;
+ROLLBACK;
+NOTICE: xproxy prepare stmt stmt1
+NOTICE: xproxy deallocate stmt stmt1
+NOTICE: xproxy prepare stmt stmt2
+NOTICE: xproxy deallocate stmt stmt2
+-- case6: utility statements in subtransaction block
+BEGIN;
+SET client_min_messages TO ERROR;
+SAVEPOINT sp1;
+CREATE TEMP TABLE temp_test(a int, b text);
+CREATE TEMP TABLE temp_users AS SELECT * FROM users;
+PREPARE stmt1 (text, text) AS INSERT INTO users VALUES ($1, $2);
+EXECUTE stmt1 ('Alice', 'alice@example.com');
+DEALLOCATE PREPARE stmt1;
+PREPARE stmt2 (text) AS SELECT * FROM temp_users WHERE username = $1;
+EXECUTE stmt2 ('Alice');
+ username |       email       
+----------+-------------------
+ Alice    | alice@example.com
+ Alice    | alice@example.com
+ Alice    | alice@example.com
+ Alice    | alice@example.com
+(4 rows)
+
+DEALLOCATE PREPARE stmt2;
+DROP TABLE temp_test;
+DROP TABLE temp_users;
+ROLLBACK TO SAVEPOINT sp1;
+END;
+NOTICE: xproxy set variable client_min_messages to 'error'
+NOTICE: xproxy prepare stmt stmt1
+NOTICE: xproxy deallocate stmt stmt1
+NOTICE: xproxy prepare stmt stmt2
+NOTICE: xproxy deallocate stmt stmt2
+-- case7: session level advisory lock 
+SELECT pg_advisory_lock(1);
+NOTICE: xproxy session level advisory locks held by the current session
+ pg_advisory_lock 
+------------------
+ 
+(1 row)
+
+SELECT pg_advisory_unlock(1);
+NOTICE: xproxy no session level advisory locks held by the current session
+ pg_advisory_unlock 
+--------------------
+ t
+(1 row)
+
+SELECT pg_advisory_lock(1, 1);
+NOTICE: xproxy session level advisory locks held by the current session
+ pg_advisory_lock 
+------------------
+ 
+(1 row)
+
+SELECT pg_advisory_unlock(1, 1);
+NOTICE: xproxy no session level advisory locks held by the current session
+ pg_advisory_unlock 
+--------------------
+ t
+(1 row)
+
+SELECT pg_advisory_lock_shared(1);
+NOTICE: xproxy session level advisory locks held by the current session
+ pg_advisory_lock_shared 
+-------------------------
+ 
+(1 row)
+
+SELECT pg_advisory_unlock_shared(1);
+NOTICE: xproxy no session level advisory locks held by the current session
+ pg_advisory_unlock_shared 
+---------------------------
+ t
+(1 row)
+
+SELECT pg_advisory_lock_shared(1, 1);
+NOTICE: xproxy session level advisory locks held by the current session
+ pg_advisory_lock_shared 
+-------------------------
+ 
+(1 row)
+
+SELECT pg_advisory_unlock_shared(1, 1);
+NOTICE: xproxy no session level advisory locks held by the current session
+ pg_advisory_unlock_shared 
+---------------------------
+ t
+(1 row)
+
+SELECT pg_try_advisory_lock(1);
+NOTICE: xproxy session level advisory locks held by the current session
+ pg_try_advisory_lock 
+----------------------
+ t
+(1 row)
+
+SELECT pg_try_advisory_lock(1, 1);
+NOTICE: xproxy session level advisory locks held by the current session
+ pg_try_advisory_lock 
+----------------------
+ t
+(1 row)
+
+SELECT pg_try_advisory_lock_shared(1);
+NOTICE: xproxy session level advisory locks held by the current session
+ pg_try_advisory_lock_shared 
+-----------------------------
+ t
+(1 row)
+
+SELECT pg_try_advisory_lock_shared(1, 1);
+NOTICE: xproxy session level advisory locks held by the current session
+ pg_try_advisory_lock_shared 
+-----------------------------
+ t
+(1 row)
+
+SELECT pg_advisory_unlock_all();
+NOTICE: xproxy no session level advisory locks held by the current session
+ pg_advisory_unlock_all 
+------------------------
+ 
+(1 row)
+
+DROP TABLE IF EXISTS test_lock_tb;
+CREATE TABLE test_lock_tb(id int, flag bool);
+SELECT pg_advisory_lock(1);
+NOTICE: xproxy session level advisory locks held by the current session
+ pg_advisory_lock 
+------------------
+ 
+(1 row)
+
+SELECT pg_advisory_lock(1, 1);
+NOTICE: xproxy session level advisory locks held by the current session
+ pg_advisory_lock 
+------------------
+ 
+(1 row)
+
+SELECT * FROM test_lock_tb WHERE flag = (SELECT pg_advisory_unlock(1));
+NOTICE: xproxy session level advisory locks held by the current session
+ id | flag 
+----+------
+(0 rows)
+
+SELECT * FROM test_lock_tb WHERE flag = (SELECT pg_advisory_unlock(1, 1));
+NOTICE: xproxy no session level advisory locks held by the current session
+ id | flag 
+----+------
+(0 rows)
+
+DROP TABLE test_lock_tb;
+-- case8: LISTEN/NOTIFY
+LISTEN test_channel;
+NOTICE: xproxy listen on test_channel
+--NOTIFY test_channel, 'test message 1';
+--BEGIN;
+--NOTIFY test_channel, 'test message 2';
+--COMMIT;
+BEGIN;
+NOTIFY test_channel, 'test message 3';
+ROLLBACK;
+UNLISTEN test_channel;
+NOTICE: xproxy unlisten on test_channel
+DROP FUNCTION test_func;
+DROP PROCEDURE test_proc;
+DROP TABLE users;
+DROP EXTENSION query_check;
