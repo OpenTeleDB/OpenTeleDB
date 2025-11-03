@@ -385,7 +385,7 @@ pgstat_count_heap_update(Relation rel, bool hot, bool newpage)
 #ifdef USE_XSTORE
 	if (!RelationIsXstoreTable(rel))
 		Assert(!(hot && newpage));
-#elif
+#else
 	Assert(!(hot && newpage));
 #endif
 
