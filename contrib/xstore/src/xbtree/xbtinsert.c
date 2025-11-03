@@ -1197,7 +1197,6 @@ _xbt_split(Relation rel, BTScanInsert itup_key, Buffer buf, Buffer cbuf,
 	UnpackedUndoRecord			 *undorec = NULL;
 	UndoRecPtr			  oldPrevUrp;
 	FullTransactionId     sub_xid = InvalidFullTransactionId;
-	int			indnkeyatts = IndexRelationGetNumberOfKeyAttributes(rel);
 	XBTRecycleQueueAddress addr;
 
 	/*
@@ -1353,7 +1352,7 @@ _xbt_split(Relation rel, BTScanInsert itup_key, Buffer buf, Buffer cbuf,
      */
 	leftoff = P_HIKEY;
 	Assert(XBTreeTupleGetNAtts(lefthikey, rel) > 0);
-	Assert(XBTreeTupleGetNAtts(lefthikey, rel) <= indnkeyatts);
+	Assert(XBTreeTupleGetNAtts(lefthikey, rel) <= IndexRelationGetNumberOfKeyAttributes(rel));
 
 	if (PageAddItem(leftpage, (Item) lefthikey, itemsz, leftoff, 
 		false, false) == InvalidOffsetNumber)
@@ -1423,7 +1422,7 @@ _xbt_split(Relation rel, BTScanInsert itup_key, Buffer buf, Buffer cbuf,
 		itemsz = ItemIdGetLength(itemid);
 		item = (IndexTuple) PageGetItem(origpage, itemid);
 		Assert(XBTreeTupleGetNAtts(item, rel) > 0);
-		Assert(XBTreeTupleGetNAtts(item, rel) <= indnkeyatts);
+		Assert(XBTreeTupleGetNAtts(item, rel) <= IndexRelationGetNumberOfKeyAttributes(rel));
 		if (PageAddItem(rightpage, (Item) item, itemsz, rightoff, 
 						false, false) == InvalidOffsetNumber)
 		{
