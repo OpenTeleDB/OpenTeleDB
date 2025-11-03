@@ -277,10 +277,10 @@ xheap_tuple_satisfies_visibility(XHeapTuple xhtup, Snapshot snapshot, Buffer buf
 			ereport(PANIC,
 					(errmsg("invalid cid! "
 							"LogInfo: undo state %d, tuple flag %u, tupXid %lu. "
-							"TransInfo: current xid %lu, oid %u, undo ptr:%lu, tid(%u, %u). globalrecyclexid %lu. "
+							"TransInfo: current xid %lu, undo ptr:%lu, tid(%u, %u). globalrecyclexid %lu. "
 							"Snapshot: type %d, xmin %u.",
 							state, xtuple->disk_tuple->flag, tupXid.value, 
-							GetTopFullTransactionIdIfAny().value, xtuple->table_oid, xtuple->disk_tuple->urec,
+							GetTopFullTransactionIdIfAny().value, xtuple->disk_tuple->urec,
 							blockno, offnum, pg_atomic_read_u64(&undo_sys_ctx->global_recycle_xid),
 							snapshot->snapshot_type, snapshot->xmin)));
 
