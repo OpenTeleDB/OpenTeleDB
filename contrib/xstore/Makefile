@@ -17,7 +17,7 @@ OBJS = src/undo/undorecord.o  src/undo/undofetch.o \
 	src/xbtree/xbtsplitloc.o src/xbtree/xbtsort.o  \
 	src/xbtree/xbtinsert.o src/xbtree/xbtsearch.o src/xbtree/xbtutils.o \
 	src/xheap/xmulti.o src/xheap/xlru.o src/xheap/xheapundo.o  src/xheap/xlock.o \
-	src/xheap/xcluster.o
+	src/xheap/xcluster.o src/xheap/xheapfun.o
 
 
 EXTENSION = xstore

@@ -760,6 +760,65 @@ DROP SCHEMA IF EXISTS xstore;
 CREATE SCHEMA xstore;
 
 --
+-- get_raw_page()
+--
+CREATE FUNCTION xstore.get_raw_page(text, int4)
+RETURNS bytea
+AS 'MODULE_PATHNAME', 'get_raw_page'
+LANGUAGE C STRICT PARALLEL SAFE;
+
+CREATE FUNCTION xstore.get_raw_page_fork(text, text, int4)
+RETURNS bytea
+AS 'MODULE_PATHNAME', 'get_raw_page_fork'
+LANGUAGE C STRICT PARALLEL SAFE;
+
+--
+-- xheap_page_header()
+--
+CREATE FUNCTION xstore.xheap_page_header(IN page bytea,
+    OUT lsn pg_lsn,
+    OUT checksum int4,
+    OUT flags smallint,
+    OUT shard smallint,
+    OUT lower smallint,
+    OUT upper smallint,
+    OUT special smallint,
+    OUT pagesize smallint,
+    OUT version smallint,
+    OUT algorithm_id smallint,
+    OUt pd_prune_ts bigint,
+    OUT potential_freespace smallint,
+    OUT prune_xid bigint)
+AS 'MODULE_PATHNAME', 'xheap_page_header'
+LANGUAGE C STRICT PARALLEL SAFE;
+
+--
+-- xheap_page_items()
+--
+CREATE FUNCTION xstore.xheap_page_items(IN page bytea,
+--  IN rel_name text,
+    OUT lp smallint,
+    OUT lp_off smallint,
+    OUT lp_flags smallint,
+    OUT lp_len smallint,
+    OUT modified_xid bigint,
+    OUT locker_xid bigint,
+    OUT undo_record_ptr bigint,
+    OUT flag integer,
+    OUT flag2 integer,
+    OUT t_hoff smallint,
+    OUT t_shardid smallint,
+    OUT t_bits text,
+    OUT undo_zone_id integer,
+    OUT undo_block_id integer,
+    OUT undo_offset smallint,
+    OUT attrs bytea)
+RETURNS SETOF record
+AS 'MODULE_PATHNAME', 'xheap_page_items'
+LANGUAGE C STRICT PARALLEL SAFE;
+
+
+--
 -- xbt_metap()
 --
 CREATE FUNCTION xstore.xbt_metap(IN relname text,
