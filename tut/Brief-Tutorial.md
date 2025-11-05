@@ -347,15 +347,14 @@ DROP DATABASE
 
 1. XProxy构建
 
-XProxy进入xproxy源码目录进行构建
-
 ```
+// 以从GitHub克隆仓库为例
+git clone https://github.com/OpenTeleDB/OpenTeleDB.git
+cd contrib/xproxy
 sh ./ctg_build.sh // 构建完成后，进入根目录下的xproxy目录
 
 cd xproxy  // 目录结构为 bin:二进制文件以及启动脚本目录 etc:配置目录 lib：动态库依赖目录
 ```
-
-
 
 2. XProxy配置
 
