@@ -479,7 +479,7 @@ database default
 ```
 cd xproxy/bin
 
-sh xproxy-start.sh ../etc/template.conf  # 启动
+sh xproxy-start.sh ../etc/xproxy.conf  # 启动, 若在配置文件中设置daemonize为yes则可以后台启动
 
 # 启动后，查看进程
 
