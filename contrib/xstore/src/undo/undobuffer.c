@@ -304,10 +304,11 @@ load_prepare_buffers_by_xlog(UndoPrepareBuffers *upbuffers, RelFileLocator rloca
 			XLogRedoAction action = xlog_undo_read_buffer_for_redo(xlog_record, rlocator, MAIN_FORKNUM, blk, 
 				rbm, false, &buffer);
 			if(action == BLK_NOTFOUND)
-				ereport(PANIC, (errcode(ERRCODE_DATA_EXCEPTION), 
-						errmsg("logno %u blk %u not found.",
-						ulog->logno, blk)));
-			else
+			{
+				upbuffers->ubuffers[upbuffers->curr_idx].buf = InvalidBuffer;
+				upbuffers->ubuffers[upbuffers->curr_idx].blk = InvalidBlockNumber;
+				upbuffers->curr_idx++;
+			} else
 			{
 				upbuffers->ubuffers[upbuffers->curr_idx].buf = buffer;
 				upbuffers->ubuffers[upbuffers->curr_idx].blk = blk;
