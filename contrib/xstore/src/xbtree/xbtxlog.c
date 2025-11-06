@@ -294,6 +294,12 @@ xbtree_xlog_insert(bool isleaf, bool ismeta, XLogReaderState *record)
 		MarkBufferDirty(buffer);
 	}
 
+	if(isleaf)
+	{
+		// prepare insert undo ,insert undo, update zone meta and update transaction slot;
+		_xbt_redo_undo_insert(record, blkno);
+	}
+
 	if (BufferIsValid(buffer))
 		UnlockReleaseBuffer(buffer);
 
@@ -408,7 +414,7 @@ _xbt_redo_undo_split(XLogReaderState *record, Buffer buf, bool insert_on_left)
 }
 
 static void
-xbtree_xlog_split(bool onleft, XLogReaderState *record, bool hasOpaque)
+xbtree_xlog_split(bool newitemonleft, XLogReaderState *record, bool hasOpaque)
 {
 	XLogRecPtr lsn = record->EndRecPtr;
 	xl_xbtree_split *xlrec = (xl_xbtree_split *) XLogRecGetData(record);
@@ -446,23 +452,23 @@ xbtree_xlog_split(bool onleft, XLogReaderState *record, bool hasOpaque)
 	if (action == BLK_NEEDS_REDO)
 	{
 		datapos = XLogRecGetBlockData(record, BTREE_SPLIT_LEFT_BLOCK_NUM, &datalen);
-		_xbt_xlog_split_redo_left_page(lbuf, lsn, (void *) xlrec, rightsib, onleft,
+		_xbt_xlog_split_redo_left_page(lbuf, lsn, (void *) xlrec, rightsib, newitemonleft,
 										(void *) datapos, datalen, hasOpaque);
 		MarkBufferDirty(lbuf);
+	}
+
+	if(isleaf)
+	{
+		if(newitemonleft)
+			_xbt_redo_undo_split(record,lbuf,true);
+		else
+			_xbt_redo_undo_split(record,rbuf,false);
 	}
 
 	if (BufferIsValid(lbuf))
 		UnlockReleaseBuffer(lbuf);
 
 	UnlockReleaseBuffer(rbuf);
-
-	if(isleaf)
-	{
-		if(onleft)
-			_xbt_redo_undo_split(record,lbuf,true);
-		else
-			_xbt_redo_undo_split(record,rbuf,false);
-	}
 
 	if (rnext != P_NONE)
 	{
