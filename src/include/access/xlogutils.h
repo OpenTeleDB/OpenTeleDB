@@ -114,5 +114,7 @@ extern void XLogReadDetermineTimeline(XLogReaderState *state,
 									  TimeLineID currTLI);
 
 extern void WALReadRaiseError(WALReadError *errinfo);
-
+#ifdef USE_XSTORE
+extern void forget_invalid_page(RelFileLocator locator, ForkNumber forkno, BlockNumber blkno);
+#endif
 #endif
