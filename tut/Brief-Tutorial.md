@@ -996,7 +996,7 @@ Create table xt1(a int primary key, b int);
 1. 不指定创建索引类型，XStore表默认创建xbtree索引
 
 ```
-create index xbt_idx1 on xt1;
+create index xbt_idx1 on xt1(a);
 ```
 
 2. 使用using xbtree关键字
