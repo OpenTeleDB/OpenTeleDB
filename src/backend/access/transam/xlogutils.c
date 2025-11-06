@@ -165,6 +165,42 @@ log_invalid_page(RelFileLocator locator, ForkNumber forkno, BlockNumber blkno,
 	}
 }
 
+#ifdef USE_XSTORE
+/* Forget any invalid pages == blkno, because they've been dropped */
+void
+forget_invalid_page(RelFileLocator locator, ForkNumber forkno, BlockNumber blkno)
+{
+	xl_invalid_page *hentry;
+	xl_invalid_page_key key;
+	bool found;
+
+	if (invalid_page_tab == NULL)
+		return;					/* nothing to do */
+
+	key.locator = locator;
+	key.forkno = forkno;
+	key.blkno = blkno;
+	hentry = (xl_invalid_page *)
+		hash_search(invalid_page_tab, &key, HASH_ENTER, &found);
+	if (found)
+	{
+		if (message_level_is_interesting(DEBUG2))
+		{
+			char	   *path = relpathperm(hentry->key.locator, forkno);
+
+			elog(DEBUG2, "page %u of relation %s has been dropped",
+					hentry->key.blkno, path);
+			pfree(path);
+		}
+
+		if (hash_search(invalid_page_tab,
+						&hentry->key,
+						HASH_REMOVE, NULL) == NULL)
+			elog(ERROR, "hash table corrupted");
+	}
+}
+#endif
+
 /* Forget any invalid pages >= minblkno, because they've been dropped */
 static void
 forget_invalid_pages(RelFileLocator locator, ForkNumber forkno,

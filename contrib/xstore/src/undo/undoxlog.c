@@ -71,7 +71,7 @@ xlog_undo_unlink_redo(const xl_undolog_unlink *xlrec, XLogRecPtr unlink_lsn)
 	int				logno = 0;
 	UndoLogControl *ulog;
 	UndoSegment *usp;
-
+	RelFileLocator rlocator;
 	Assert(xlrec != NULL);
 
 	logno = UNDO_PTR_GET_LOG_NO(xlrec->head);
@@ -94,6 +94,13 @@ xlog_undo_unlink_redo(const xl_undolog_unlink *xlrec, XLogRecPtr unlink_lsn)
 		unlink_undo_segment(usp, logno, new_head, UNDO_DATA_DB_OID);
 		usp->lsn = (unlink_lsn);
 		unlock_undo_segment(usp);
+	}
+
+	UNDO_PTR_ASSIGN_REL_FILE_LOCALTOR(rlocator, xlrec->prevhead, UNDO_DATA_DB_OID);
+	for (UndoRecPtr start = xlrec->prevhead; start < xlrec->head;)
+	{
+		forget_invalid_page(rlocator, MAIN_FORKNUM, start / BLCKSZ);
+		start += UNDOLOG_FILE_SIZE(UNDO_DATA_DB_OID);;
 	}
 	return;
 }
@@ -135,6 +142,7 @@ xlog_undo_unlink_txnslot_redo(const xl_undolog_unlink *xlrec, XLogRecPtr unlink_
 	int				logno = 0;
 	UndoLogControl *ulog;
 	UndoSegment *usp;
+	RelFileLocator rlocator;
 
 	Assert(xlrec != NULL);
 
@@ -159,6 +167,13 @@ xlog_undo_unlink_txnslot_redo(const xl_undolog_unlink *xlrec, XLogRecPtr unlink_
 		unlink_undo_segment(usp, logno, new_head, UNDO_TXN_DB_OID);
 		usp->lsn = (unlink_lsn);
 		unlock_undo_segment(usp);
+	}
+
+	UNDO_PTR_ASSIGN_REL_FILE_LOCALTOR(rlocator, xlrec->prevhead, UNDO_TXN_DB_OID);
+	for (UndoRecPtr start = xlrec->prevhead; start < xlrec->head;)
+	{
+		forget_invalid_page(rlocator, MAIN_FORKNUM, start / BLCKSZ);
+		start += UNDOLOG_FILE_SIZE(UNDO_TXN_DB_OID);
 	}
 	return;
 }

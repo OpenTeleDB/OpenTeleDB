@@ -308,7 +308,8 @@ load_prepare_buffers_by_xlog(UndoPrepareBuffers *upbuffers, RelFileLocator rloca
 				upbuffers->ubuffers[upbuffers->curr_idx].buf = InvalidBuffer;
 				upbuffers->ubuffers[upbuffers->curr_idx].blk = InvalidBlockNumber;
 				upbuffers->curr_idx++;
-			} else
+			}
+			else 
 			{
 				upbuffers->ubuffers[upbuffers->curr_idx].buf = buffer;
 				upbuffers->ubuffers[upbuffers->curr_idx].blk = blk;
