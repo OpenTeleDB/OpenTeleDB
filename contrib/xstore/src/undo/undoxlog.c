@@ -72,6 +72,11 @@ xlog_undo_unlink_redo(const xl_undolog_unlink *xlrec, XLogRecPtr unlink_lsn)
 	UndoLogControl *ulog;
 	UndoSegment *usp;
 	RelFileLocator rlocator;
+	BlockNumber start_blk;
+	BlockNumber end_blk;
+	UndoLogOffset new_head;
+	UndoLogOffset head;
+
 	Assert(xlrec != NULL);
 
 	logno = UNDO_PTR_GET_LOG_NO(xlrec->head);
@@ -82,25 +87,29 @@ xlog_undo_unlink_redo(const xl_undolog_unlink *xlrec, XLogRecPtr unlink_lsn)
 
 	Assert(UNDO_PTR_GET_LOG_NO(xlrec->head) == UNDO_PTR_GET_LOG_NO(xlrec->prevhead));
 	usp = &ulog->undo_data_seg;
+	
+	new_head = UNDO_PTR_GET_OFFSET(xlrec->head);
+	head = UNDO_PTR_GET_OFFSET(xlrec->prevhead);
+
+	forget_undo_log_buffers(ulog, head, new_head, UNDO_DATA_DB_OID);
+	lock_undo_segment(usp);
+	
+	unlink_undo_segment(usp, logno, head, new_head, UNDO_DATA_DB_OID);
 	if (usp->lsn < unlink_lsn)
 	{
-		UndoLogOffset new_head = UNDO_PTR_GET_OFFSET(xlrec->head);
-		UndoLogOffset head = usp->head;
-
 		Assert(head == UNDO_PTR_GET_OFFSET(xlrec->prevhead));
-		forget_undo_log_buffers(ulog, head, new_head, UNDO_DATA_DB_OID);
-		lock_undo_segment(usp);
+		usp->head = new_head;
 		usp->dirty = true;
-		unlink_undo_segment(usp, logno, new_head, UNDO_DATA_DB_OID);
 		usp->lsn = (unlink_lsn);
-		unlock_undo_segment(usp);
 	}
+	unlock_undo_segment(usp);
 
 	UNDO_PTR_ASSIGN_REL_FILE_LOCALTOR(rlocator, xlrec->prevhead, UNDO_DATA_DB_OID);
-	for (UndoRecPtr start = xlrec->prevhead; start < xlrec->head;)
+	start_blk = xlrec->prevhead / BLCKSZ;
+	end_blk = xlrec->head / BLCKSZ;
+	for (BlockNumber blk = start_blk; blk < end_blk; blk++)
 	{
-		forget_invalid_page(rlocator, MAIN_FORKNUM, start / BLCKSZ);
-		start += UNDOLOG_FILE_SIZE(UNDO_DATA_DB_OID);;
+		forget_invalid_page(rlocator, MAIN_FORKNUM, blk);
 	}
 	return;
 }
@@ -143,7 +152,10 @@ xlog_undo_unlink_txnslot_redo(const xl_undolog_unlink *xlrec, XLogRecPtr unlink_
 	UndoLogControl *ulog;
 	UndoSegment *usp;
 	RelFileLocator rlocator;
-
+	BlockNumber start_blk;
+	BlockNumber end_blk;
+	UndoLogOffset new_head;
+	UndoLogOffset head;
 	Assert(xlrec != NULL);
 
 	logno = UNDO_PTR_GET_LOG_NO(xlrec->head);
@@ -154,26 +166,28 @@ xlog_undo_unlink_txnslot_redo(const xl_undolog_unlink *xlrec, XLogRecPtr unlink_
 
 	Assert(UNDO_PTR_GET_LOG_NO(xlrec->head) == UNDO_PTR_GET_LOG_NO(xlrec->prevhead));
 	usp = &ulog->undo_txn_seg;
+	new_head = UNDO_PTR_GET_OFFSET(xlrec->head);
+	head = UNDO_PTR_GET_OFFSET(xlrec->prevhead);
 
+	forget_undo_log_buffers(ulog, head, new_head, UNDO_TXN_DB_OID);
+	lock_undo_segment(usp);
+	
+	unlink_undo_segment(usp, logno, head, new_head, UNDO_TXN_DB_OID);
 	if (usp->lsn < unlink_lsn)
 	{
-		UndoLogOffset new_head = UNDO_PTR_GET_OFFSET(xlrec->head);
-		UndoLogOffset head = usp->head;
-
 		Assert(head == UNDO_PTR_GET_OFFSET(xlrec->prevhead));
-		forget_undo_log_buffers(ulog, head, new_head, UNDO_TXN_DB_OID);
-		lock_undo_segment(usp);
+		usp->head = new_head;
 		usp->dirty = true;
-		unlink_undo_segment(usp, logno, new_head, UNDO_TXN_DB_OID);
 		usp->lsn = (unlink_lsn);
-		unlock_undo_segment(usp);
 	}
+	unlock_undo_segment(usp);
 
 	UNDO_PTR_ASSIGN_REL_FILE_LOCALTOR(rlocator, xlrec->prevhead, UNDO_TXN_DB_OID);
-	for (UndoRecPtr start = xlrec->prevhead; start < xlrec->head;)
+	start_blk = xlrec->prevhead / BLCKSZ;
+	end_blk = xlrec->head / BLCKSZ;
+	for (BlockNumber blk = start_blk; blk < end_blk; blk++)
 	{
-		forget_invalid_page(rlocator, MAIN_FORKNUM, start / BLCKSZ);
-		start += UNDOLOG_FILE_SIZE(UNDO_TXN_DB_OID);
+		forget_invalid_page(rlocator, MAIN_FORKNUM, blk);
 	}
 	return;
 }
