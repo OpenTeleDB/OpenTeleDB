@@ -44,7 +44,7 @@ void unlock_undo_segment(UndoSegment *seg);
 /* Extend the end of this undo log to cover newInsert */
 void extend_undo_segment(UndoSegment *seg, int logno, UndoLogOffset offset, uint32 db_id);
 /* Unlink unused undo segment file. */
-void unlink_undo_segment(UndoSegment *seg, int logno, UndoLogOffset offset, uint32 db_id);
+extern void unlink_undo_segment(UndoSegment *seg, int logno, UndoLogOffset start_off, UndoLogOffset end_off, uint32 dbId);
 
 /****************undo log ************ */
 

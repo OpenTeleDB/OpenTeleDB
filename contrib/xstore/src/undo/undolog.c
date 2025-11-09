@@ -80,7 +80,7 @@ bool undolog_attach(UndoLogControl *ulog);
 bool undolog_detach(UndoLogControl *ulog);
 
 void init_undo_segemnt(UndoLogControl *ulog, UndoSegmentType type);
-void create_non_exists_undo_file(UndoSegment *seg, int logno, uint32 dbId);
+static void create_non_exists_undo_file(UndoSegment *seg, int logno, uint32 dbId);
 void checkpoint_undo_segment(int fd, UndoSegmentType type);
 void recovery_undo_segment(int fd, UndoSegmentType type);
 
@@ -1086,34 +1086,36 @@ extend_undo_segment(UndoSegment *seg, int logno, UndoLogOffset offset, uint32 db
 
 /* Unlink undo segment file from startOffset to endOffset. */
 void
-unlink_undo_segment(UndoSegment *seg, int logno, UndoLogOffset offset, uint32 dbId)
+unlink_undo_segment(UndoSegment *seg, int logno, UndoLogOffset start_off, UndoLogOffset end_off, uint32 dbId)
 {
 	RelFileLocator	  rlocator;
-	UndoLogOffset head = seg->head;
+	UndoLogOffset head = start_off;
 	SMgrRelation  reln;
 	uint64		  segSize = UNDOLOG_FILE_SIZE(dbId);
 	uint32		  segBlocks = UNDOLOG_FILE_BLOCKS(dbId);
 	uint32		  releaseBlocks = 0;
-	Assert(head < offset && seg->head <= seg->tail);
-	UNDO_PTR_ASSIGN_REL_FILE_LOCALTOR(rlocator, MAKE_UNDO_REC_PTR(logno, offset), dbId);
+	Assert(head < end_off);
+	UNDO_PTR_ASSIGN_REL_FILE_LOCALTOR(rlocator, MAKE_UNDO_REC_PTR(logno, end_off), dbId);
 	reln = smgropen(rlocator, INVALID_PROC_NUMBER);
 
-	Assert(offset % segSize == 0);
-	seg->head = offset;
+	Assert(end_off % segSize == 0);
 
-	while (head < offset)
+	while (head < end_off)
 	{
 		/* delete a new undo segment. */
 		reln->smgr_targblock = (head / BLCKSZ);
-		undo_unlink(reln, InRecovery) ;
-		if (pg_atomic_read_u32(&undo_sys_ctx->undo_total_size) < segBlocks)
+		undo_unlink(reln, InRecovery);
+		if (head >= seg->head)
 		{
-			ereport(
-				PANIC,
-				(errmsg(UNDOFORMAT("unlink undo log, total blocks=%u < segment size."),
-						pg_atomic_read_u32(&undo_sys_ctx->undo_total_size))));
+			if (pg_atomic_read_u32(&undo_sys_ctx->undo_total_size) < segBlocks)
+			{
+				ereport(
+					PANIC,
+					(errmsg(UNDOFORMAT("unlink undo log, total blocks=%u < segment size."),
+							pg_atomic_read_u32(&undo_sys_ctx->undo_total_size))));
+			}
+			pg_atomic_fetch_sub_u32(&undo_sys_ctx->undo_total_size, segBlocks);
 		}
-		pg_atomic_fetch_sub_u32(&undo_sys_ctx->undo_total_size, segBlocks);
 		releaseBlocks += segBlocks;
 		head += segSize;
 	}
@@ -1121,12 +1123,12 @@ unlink_undo_segment(UndoSegment *seg, int logno, UndoLogOffset offset, uint32 db
 	elog(DEBUG1,
 		 UNDOFORMAT("unlink undo log, total blocks=%u, logno=%d, dbid=%u, new head=%lu "
 					",release blocks=%u."),
-		 pg_atomic_read_u32(&undo_sys_ctx->undo_total_size), logno, dbId, offset,
+		 pg_atomic_read_u32(&undo_sys_ctx->undo_total_size), logno, dbId, end_off,
 		 releaseBlocks);
 	return;
 }
 
-void
+static void
 create_non_exists_undo_file(UndoSegment *seg, int logno, uint32 dbId)
 {
 	UndoLogOffset offset = seg->head;
@@ -2088,21 +2090,23 @@ undolog_release_space(UndoLogControl *ulog, UndoRecPtr starturp, UndoRecPtr endu
 {
 	UndoLogOffset end = UNDO_PTR_GET_OFFSET(endurp);
 	int			  startSegno = (int) (ulog->undo_data_seg.head / UNDOLOG_DAT_FILE_MAXSIZE);
-	int			  endSegno = (int) (end / UNDOLOG_DAT_FILE_MAXSIZE);
+	int			  end_segno = (int) (end / UNDOLOG_DAT_FILE_MAXSIZE);
 
-	if (unlikely(startSegno < endSegno))
+	if (unlikely(startSegno < end_segno))
 	{
-		UndoRecPtr prevHead;
+		UndoRecPtr prev_head;
 		if (unlikely(*forceRecycleSize > 0))
 		{
-			*forceRecycleSize -= (int) (endSegno - startSegno) * UNDOLOG_DAT_FILE_BLOCKS;
+			*forceRecycleSize -= (int) (end_segno - startSegno) * UNDOLOG_DAT_FILE_BLOCKS;
 		}
 		forget_undo_log_buffers(ulog, startSegno * UNDOLOG_DAT_FILE_MAXSIZE,
-								 endSegno * UNDOLOG_DAT_FILE_MAXSIZE, UNDO_DATA_DB_OID);
+								 end_segno * UNDOLOG_DAT_FILE_MAXSIZE, UNDO_DATA_DB_OID);
 		lock_undo_segment(&ulog->undo_data_seg);
-		prevHead = MAKE_UNDO_REC_PTR(ulog->logno, ulog->undo_data_seg.head);
-		unlink_undo_segment(&ulog->undo_data_seg, ulog->logno, endSegno * UNDOLOG_DAT_FILE_MAXSIZE,
+		prev_head = MAKE_UNDO_REC_PTR(ulog->logno, ulog->undo_data_seg.head);
+		unlink_undo_segment(&ulog->undo_data_seg, ulog->logno, 
+					UNDO_PTR_GET_OFFSET(prev_head), end_segno * UNDOLOG_DAT_FILE_MAXSIZE,
 					  UNDO_DATA_DB_OID);
+		ulog->undo_data_seg.head = end_segno * UNDOLOG_DAT_FILE_MAXSIZE;
 		Assert(ulog->undo_data_seg.head <= ulog->insert_offset);
 		if (ulog->persistence == UNDO_PERMANENT)
 		{
@@ -2113,7 +2117,7 @@ undolog_release_space(UndoLogControl *ulog, UndoRecPtr starturp, UndoRecPtr endu
 			ulog->undo_data_seg.dirty = true;
 
 			undoUnlink.head = MAKE_UNDO_REC_PTR(ulog->logno, ulog->undo_data_seg.head);
-			undoUnlink.prevhead = prevHead;
+			undoUnlink.prevhead = prev_head;
 			lsn = xlog_undo_write(&undoUnlink, XLOG_UNDO_UNLINK);
 			ulog->undo_data_seg.lsn = lsn;
 			END_CRIT_SECTION();
@@ -2130,20 +2134,22 @@ undolog_release_slot_space(UndoLogControl *ulog, UndoRecPtr startSlotPtr, UndoRe
 {
 	UndoLogOffset end = UNDO_PTR_GET_OFFSET(endSlotPtr);
 	int			  startSegno = (int) (ulog->undo_txn_seg.head / UNDOLOG_TXN_FILE_MAXSIZE);
-	int			  endSegno = (int) (end / UNDOLOG_TXN_FILE_MAXSIZE);
-	UndoRecPtr	  prevHead;
-	if (unlikely(startSegno < endSegno))
+	int			  end_segno = (int) (end / UNDOLOG_TXN_FILE_MAXSIZE);
+	UndoRecPtr	  prev_head;
+	if (unlikely(startSegno < end_segno))
 	{
 		if (unlikely(*forceRecycleSize > 0))
 		{
-			*forceRecycleSize -= (int) (endSegno - startSegno) * UNDOLOG_TXN_FILE_BLOCKS;
+			*forceRecycleSize -= (int) (end_segno - startSegno) * UNDOLOG_TXN_FILE_BLOCKS;
 		}
 		forget_undo_log_buffers(ulog, startSegno * UNDOLOG_TXN_FILE_MAXSIZE,
-								 endSegno * UNDOLOG_TXN_FILE_MAXSIZE, UNDO_TXN_DB_OID);
+								 end_segno * UNDOLOG_TXN_FILE_MAXSIZE, UNDO_TXN_DB_OID);
 		lock_undo_segment(&ulog->undo_txn_seg);
-		prevHead = MAKE_UNDO_REC_PTR(ulog->logno, ulog->undo_txn_seg.head);
-		unlink_undo_segment(&ulog->undo_txn_seg, ulog->logno, endSegno * UNDOLOG_TXN_FILE_MAXSIZE,
+		prev_head = MAKE_UNDO_REC_PTR(ulog->logno, ulog->undo_txn_seg.head);
+		unlink_undo_segment(&ulog->undo_data_seg, ulog->logno, 
+					UNDO_PTR_GET_OFFSET(prev_head), end_segno * UNDOLOG_TXN_FILE_MAXSIZE,
 					  UNDO_TXN_DB_OID);
+		ulog->undo_data_seg.head = end_segno * UNDOLOG_TXN_FILE_MAXSIZE;
 		Assert(ulog->undo_txn_seg.head <= ulog->alloc_slot_offset);
 		if (ulog->persistence == UNDO_PERMANENT)
 		{
@@ -2154,7 +2160,7 @@ undolog_release_slot_space(UndoLogControl *ulog, UndoRecPtr startSlotPtr, UndoRe
 			ulog->undo_txn_seg.dirty = true;
 
 			undoUnlink.head = MAKE_UNDO_REC_PTR(ulog->logno, ulog->undo_txn_seg.head);
-			undoUnlink.prevhead = prevHead;
+			undoUnlink.prevhead = prev_head;
 			lsn = xlog_undo_write(&undoUnlink, XLOG_UNDO_SLOT_UNLINK);
 			ulog->undo_txn_seg.lsn = lsn;
 			END_CRIT_SECTION();
