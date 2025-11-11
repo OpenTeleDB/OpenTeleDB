@@ -1585,7 +1585,7 @@ Optional Packages:
   --with-ossp-uuid        obsolete spelling of --with-uuid=ossp
   --with-libxml           build with XML support
   --with-libxslt          use XSLT support when building contrib/xml2
-  --with-xstore           use xstore support when building contrib/xstore
+  --without-xstore        use xstore support when building contrib/xstore
   --with-system-tzdata=DIR
                           use system time zone data in DIR
   --without-zlib          do not use Zlib
@@ -9095,39 +9095,9 @@ $as_echo "#define USE_XSTORE 1" >>confdefs.h
   esac
 
 else
-  with_xstore=no
-
-fi
-
-
-
-#
-# xstore
-#
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking whether to build with xstore storage engine" >&5
-$as_echo_n "checking whether to build with xstore storage engine... " >&6; }
-
-
-
-# Check whether --with-xstore was given.
-if test "${with_xstore+set}" = set; then :
-  withval=$with_xstore;
-  case $withval in
-    yes)
+  with_xstore=yes
 
 $as_echo "#define USE_XSTORE 1" >>confdefs.h
-
-      ;;
-    no)
-      :
-      ;;
-    *)
-      as_fn_error $? "no argument expected for --with-xstore option" "$LINENO" 5
-      ;;
-  esac
-
-else
-  with_xstore=no
 
 fi
 
