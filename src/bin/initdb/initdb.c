@@ -1381,6 +1381,11 @@ setup_config(void)
 								  "off", true);
 #endif
 
+#ifdef USE_XSTORE
+	conflines = replace_guc_value(conflines, "shared_preload_libraries",
+								  "xstore.so", false);
+#endif
+
 	/*
 	 * Change password_encryption setting to md5 if md5 was chosen as an
 	 * authentication method, unless scram-sha-256 was also chosen.

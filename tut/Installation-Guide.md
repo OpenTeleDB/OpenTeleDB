@@ -77,23 +77,14 @@
 
 5. 编译安装
 
-   编译选项与PostgreSQL差别在于OpenTeleDB多了--with-xstore编译参数，加上此编译参数则会编译xstore模块代码。编译xraft编译选项需要：--with-zstd  --with-lz4 --with-xraft --with-openssl。
-   ```
-   export codes_dir= 路径 #源码目录路径
-   
-   export pg_install_dir= 路径 #OpenTeleDB安装路径
-   
-   ./configure --prefix=${pg_install_dir} --with-libxml --with-uuid=ossp --with-openssl --with-xstore  #在解压出来的源码目录下执行，配置编译选项
-   
-   make && make install
-   ```
+   编译xraft编译选项需要：--with-zstd  --with-lz4 --with-xraft --with-openssl。
 
-6. 按需安装contrib插件工具
-
-   以xstore工具举例：
    ```
-   cd ${codes_dir}/contrib/xstore
-   
+   export pg_install_dir= /xx/xx   #安装目录
+   export pg_data_dir=${pg_install_dir}/data  
+
+   cd xx/postgres/ #代码目录
+   ./configure --prefix=${pg_install_dir}  
    make && make install
    ```
 
@@ -105,9 +96,7 @@
 
    ```
    ${pg_install_dir}/bin/initdb -D ${pg_data_dir}
-   
-   echo "shared_preload_libraries = 'xstore.so'" >> ${pg_data_dir}/postgresql.conf #使用xstore功能需要配置此项
-   
+
    echo "shared_preload_libraries = 'xraft.so'" >> ${pg_data_dir}/postgresql.conf #使用xraft功能需要配置此项
    ```
 

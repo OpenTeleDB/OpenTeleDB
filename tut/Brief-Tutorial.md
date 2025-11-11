@@ -963,13 +963,11 @@ database "console" {
 
 **前提条件**
 
-1. 已成功编译安装带有xstore功能的数据库
+1. 创建插件
+```
+create extension xstore;
+```
 
-2. 配置文件有shared_preload_libraries = 'xstore.so'
-
-3. 需要create extension xstore;
-
- 
 
 **操作步骤**
 

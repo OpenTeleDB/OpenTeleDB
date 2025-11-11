@@ -29,7 +29,11 @@ SUBDIRS = \
 	makefiles \
 	test/regress \
 	test/isolation \
-	test/perl
+	test/perl \
+
+ifeq ($(with_xstore), yes)
+SUBDIRS += $(top_builddir)/contrib/xstore
+endif	
 
 ifeq ($(with_llvm), yes)
 SUBDIRS += backend/jit/llvm

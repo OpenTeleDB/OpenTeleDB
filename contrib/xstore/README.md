@@ -12,9 +12,7 @@ export pg_install_dir= /xx/xx   #安装目录
 export pg_data_dir=${pg_install_dir}/data  
 
 cd xx/postgres/ #代码目录
-./configure --prefix=${pg_install_dir} --with-xstore  
-make && make install 
-cd contrib/xstore  
+./configure --prefix=${pg_install_dir}  
 make && make install
 ```
     
@@ -22,7 +20,6 @@ make && make install
 1. 数据库初始化，修改数据库配置文件。  
     ```bash
     ${pg_install_dir}/bin/initdb -D ${pg_data_dir}
-    echo "shared_preload_libraries = 'xstore.so'" >> ${pg_data_dir}/postgresql.conf #使用xstore功能需要配置此项
     ```
 
 2. 启动数据库  
@@ -38,9 +35,7 @@ XStore的SQL语法与PostgreSQL的heap表使用基本一致，差别在于建表
 
 - #### XStore使用前提
 
-1. 编译参数带上--with-xstore 编译安装成功
-2. postgresql.conf配置文件添加配置 shared_preload_libraries = 'xstore.so'
-3. 创建插件 
+1. 创建插件 
     ```SQL
     create extension xstore;
     ```
