@@ -2146,10 +2146,10 @@ undolog_release_slot_space(UndoLogControl *ulog, UndoRecPtr startSlotPtr, UndoRe
 								 end_segno * UNDOLOG_TXN_FILE_MAXSIZE, UNDO_TXN_DB_OID);
 		lock_undo_segment(&ulog->undo_txn_seg);
 		prev_head = MAKE_UNDO_REC_PTR(ulog->logno, ulog->undo_txn_seg.head);
-		unlink_undo_segment(&ulog->undo_data_seg, ulog->logno, 
+		unlink_undo_segment(&ulog->undo_txn_seg, ulog->logno, 
 					UNDO_PTR_GET_OFFSET(prev_head), end_segno * UNDOLOG_TXN_FILE_MAXSIZE,
 					  UNDO_TXN_DB_OID);
-		ulog->undo_data_seg.head = end_segno * UNDOLOG_TXN_FILE_MAXSIZE;
+		ulog->undo_txn_seg.head = end_segno * UNDOLOG_TXN_FILE_MAXSIZE;
 		Assert(ulog->undo_txn_seg.head <= ulog->alloc_slot_offset);
 		if (ulog->persistence == UNDO_PERMANENT)
 		{
