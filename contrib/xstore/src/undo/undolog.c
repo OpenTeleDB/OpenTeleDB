@@ -1080,7 +1080,8 @@ extend_undo_segment(UndoSegment *seg, int logno, UndoLogOffset offset, uint32 db
 	elog(DEBUG1,
 		 UNDOFORMAT("entxend undo log, total blocks=%u, logno=%d, dbid=%u, head=%lu."),
 		 pg_atomic_read_u32(&undo_sys_ctx->undo_total_size), logno, dbId, offset);
-	seg->tail = offset;
+	if(seg->tail < offset)
+		seg->tail = offset;
 	return;
 }
 
@@ -2089,8 +2090,8 @@ undolog_release_space(UndoLogControl *ulog, UndoRecPtr starturp, UndoRecPtr endu
 					 int *forceRecycleSize)
 {
 	UndoLogOffset end = UNDO_PTR_GET_OFFSET(endurp);
-	int			  startSegno = (int) (ulog->undo_data_seg.head / UNDOLOG_DAT_FILE_MAXSIZE);
-	int			  end_segno = (int) (end / UNDOLOG_DAT_FILE_MAXSIZE);
+	UndoLogOffset startSegno =  (ulog->undo_data_seg.head / UNDOLOG_DAT_FILE_MAXSIZE);
+	UndoLogOffset end_segno = (end / UNDOLOG_DAT_FILE_MAXSIZE);
 
 	if (unlikely(startSegno < end_segno))
 	{
@@ -2133,8 +2134,8 @@ undolog_release_slot_space(UndoLogControl *ulog, UndoRecPtr startSlotPtr, UndoRe
 						 int *forceRecycleSize)
 {
 	UndoLogOffset end = UNDO_PTR_GET_OFFSET(endSlotPtr);
-	int			  startSegno = (int) (ulog->undo_txn_seg.head / UNDOLOG_TXN_FILE_MAXSIZE);
-	int			  end_segno = (int) (end / UNDOLOG_TXN_FILE_MAXSIZE);
+	UndoLogOffset startSegno = (ulog->undo_txn_seg.head / UNDOLOG_TXN_FILE_MAXSIZE);
+	UndoLogOffset end_segno = (end / UNDOLOG_TXN_FILE_MAXSIZE);
 	UndoRecPtr	  prev_head;
 	if (unlikely(startSegno < end_segno))
 	{

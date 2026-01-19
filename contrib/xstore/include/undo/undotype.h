@@ -63,7 +63,7 @@ typedef uint64 UndoSlotPtr;
 
 /* up to 64TB per log*/
 #define UNDO_LOG_MAX_SIZE                                                             \
-	((undo_max_segno_per_log >= 1) ? undo_max_segno_per_log * UNDOLOG_DAT_FILE_MAXSIZE \
+	((undo_max_segno_per_log >= 1) ? (UndoLogOffset) undo_max_segno_per_log * UNDOLOG_DAT_FILE_MAXSIZE \
 									: (UndoLogOffset) 1L << 46)
 
 /* Special value for undo record pointer which indicates that it is invalid. */
