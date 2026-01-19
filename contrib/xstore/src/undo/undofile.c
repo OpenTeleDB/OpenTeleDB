@@ -43,6 +43,15 @@ typedef struct UndoFileState
 	File mru_file;
 } UndoFileState;
 
+#define INIT_UNDO_FILETAG(a,xx_rlocator,xx_segno) \
+( \
+	memset(&(a), 0, sizeof(FileTag)), \
+	(a).handler = undo_sync_handler_pos, \
+	(a).rlocator = (xx_rlocator), \
+	(a).forknum = (MAIN_FORKNUM), \
+	(a).segno = (xx_segno) \
+)
+
 static MemoryContext UndoFileCxt;
 const char *UNDO_FILE_BASE_DIR = "undo";
 
@@ -721,10 +730,7 @@ static void
 register_forget_undo_requests(RelFileLocatorBackend rlocator, uint32 segno)
 {
 	FileTag tag;
-	tag.handler = undo_sync_handler_pos;
-	tag.forknum = MAIN_FORKNUM;
-	tag.rlocator = rlocator.locator;
-	tag.segno = segno;
+	INIT_UNDO_FILETAG(tag, rlocator.locator, segno);
 
 	Assert(undo_sync_handler_pos>0);
 
@@ -737,10 +743,8 @@ static void
 register_unlink_undo_request(RelFileLocatorBackend rlocator, uint32 segno)
 {
 	FileTag tag;
-	tag.handler = undo_sync_handler_pos;
-	tag.forknum = MAIN_FORKNUM;
-	tag.rlocator = rlocator.locator;
-	tag.segno = segno;
+	INIT_UNDO_FILETAG(tag, rlocator.locator, segno);
+	register_forget_undo_requests(rlocator, segno);
 
 	elog(DEBUG1, "register unlink : undofile (db %u spc %u node %u ,segno %u)",
 		rlocator.locator.dbOid, rlocator.locator.spcOid, rlocator.locator.relNumber, segno);
@@ -752,10 +756,7 @@ static void
 register_dirty_undo_segment(SMgrRelation reln, const UndoFileState *state)
 {
 	FileTag tag;
-	tag.handler = undo_sync_handler_pos;
-	tag.forknum = MAIN_FORKNUM;
-	tag.rlocator = reln->smgr_rlocator.locator;
-	tag.segno = state->mru_segno;
+	INIT_UNDO_FILETAG(tag, reln->smgr_rlocator.locator, state->mru_segno);
 
 	Assert(undo_sync_handler_pos>0);
 
