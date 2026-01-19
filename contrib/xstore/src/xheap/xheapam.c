@@ -2982,6 +2982,10 @@ xheap_prepare_undo_update(Oid rel_oid, Oid relfilenode, Oid tablespace,
 
 	old_cxt = MemoryContextSwitchTo(urec->mem_ctx);
 	initStringInfo(GetUndoRecordRawdata(urec));
+	if (isInplaceUpdate)
+		enlargeStringInfo(GetUndoRecordRawdata(urec),undo_xor_delta_size + sizeof(uint16) * 2); //sizeof(uint16)*2 is space for prifixlen and suffixlen
+	else
+		enlargeStringInfo(GetUndoRecordRawdata(urec),payload_len);
 	MemoryContextSwitchTo(old_cxt);
 
 	/* Set the undo record for the new tuple in case of non-inplace update */
