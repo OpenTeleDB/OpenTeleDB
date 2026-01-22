@@ -52,6 +52,7 @@ static bool
 _xbt_readnextpage(IndexScanDesc scan, BlockNumber blkno, ScanDirection dir);
 
 static bool _xbt_endpoint(IndexScanDesc scan, ScanDirection dir);
+static inline void _xbt_initialize_more_data(BTScanOpaque so, ScanDirection dir);
 
 const uint16 INVALID_TUPLE_OFFSET = (uint16) 0xa5a5;
 
@@ -1248,19 +1249,7 @@ _xbt_first(IndexScanDesc scan, ScanDirection dir)
 	else
 		PredicateLockPage(rel, BufferGetBlockNumber(buf), scan->xs_snapshot);
 
-	/* initialize moreLeft/moreRight appropriately for scan direction */
-	if (ScanDirectionIsForward(dir))
-	{
-		so->currPos.moreLeft = false;
-		so->currPos.moreRight = true;
-	}
-	else
-	{
-		so->currPos.moreLeft = true;
-		so->currPos.moreRight = false;
-	}
-	so->numKilled = 0;		/* just paranoia */
-	so->markItemIndex = -1; /* ditto */
+	_xbt_initialize_more_data(so, dir);
 
 	/* position to the precise item on the page */
 	offnum = _xbt_binsrch(rel, &inskey, buf);
@@ -1785,7 +1774,39 @@ _xbt_steppage(IndexScanDesc scan, ScanDirection dir)
 				so->currPos.nextTupleOffset);
 		so->markPos.itemIndex = so->markItemIndex;
 		so->markItemIndex = -1;
+		/*
+		 * If we're just about to start the next primitive index scan
+		 * (possible with a scan that has arrays keys, and needs to skip to
+		 * continue in the current scan direction), moreLeft/moreRight only
+		 * indicate the end of the current primitive index scan.  They must
+		 * never be taken to indicate that the top-level index scan has ended
+		 * (that would be wrong).
+		 *
+		 * We could handle this case by treating the current array keys as
+		 * markPos state.  But depending on the current array state like this
+		 * would add complexity.  Instead, we just unset markPos's copy of
+		 * moreRight or moreLeft (whichever might be affected), while making
+		 * btrestpos reset the scan's arrays to their initial scan positions.
+		 * In effect, btrestpos leaves advancing the arrays up to the first
+		 * _bt_readpage call (that takes place after it has restored markPos).
+		 */
+		if (so->needPrimScan)
+		{
+			if (ScanDirectionIsForward(so->currPos.dir))
+				so->markPos.moreRight = true;
+			else
+				so->markPos.moreLeft = true;
+		}
 	}
+
+	/*
+	 * Cancel primitive index scans that were scheduled when the call to
+	 * _bt_readpage for currPos happened to use the opposite direction to the
+	 * one that we're stepping in now.  (It's okay to leave the scan's array
+	 * keys as-is, since the next _bt_readpage will advance them.)
+	 */
+	if (so->currPos.dir != dir)
+		so->needPrimScan = false;
 
 	if (ScanDirectionIsForward(dir))
 	{
@@ -1994,19 +2015,7 @@ _xbt_endpoint(IndexScanDesc scan, ScanDirection dir)
 	so->currPos.buf = buf;
 	so->currPos.currPage = BufferGetBlockNumber(so->currPos.buf);
 
-	/* initialize moreLeft/moreRight appropriately for scan direction */
-	if (ScanDirectionIsForward(dir))
-	{
-		so->currPos.moreLeft = false;
-		so->currPos.moreRight = true;
-	}
-	else
-	{
-		so->currPos.moreLeft = true;
-		so->currPos.moreRight = false;
-	}
-	so->numKilled = 0;		/* just paranoia */
-	so->markItemIndex = -1; /* ditto */
+	_xbt_initialize_more_data(so, dir);
 
 	/*
      * Now load data from the first page of the scan.
@@ -2047,19 +2056,9 @@ _xbt_parallel_readpage(IndexScanDesc scan, BlockNumber blkno, ScanDirection dir)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 
-	/* initialize moreLeft/moreRight appropriately for scan direction */
-	if (ScanDirectionIsForward(dir))
-	{
-		so->currPos.moreLeft = false;
-		so->currPos.moreRight = true;
-	}
-	else
-	{
-		so->currPos.moreLeft = true;
-		so->currPos.moreRight = false;
-	}
-	so->numKilled = 0;			/* just paranoia */
-	so->markItemIndex = -1;		/* ditto */
+	Assert(!so->needPrimScan);
+
+	_xbt_initialize_more_data(so, dir);
 
 	if (!_xbt_readnextpage(scan, blkno, dir))
 		return false;
@@ -2256,4 +2255,28 @@ _xbt_readnextpage(IndexScanDesc scan, BlockNumber blkno, ScanDirection dir)
 	}
 
 	return true;
+}
+static inline void
+_xbt_initialize_more_data(BTScanOpaque so, ScanDirection dir)
+{
+	if (so->needPrimScan)
+	{
+		Assert(so->numArrayKeys);
+
+		so->currPos.moreLeft = true;
+		so->currPos.moreRight = true;
+		so->needPrimScan = false;
+	}
+	else if (ScanDirectionIsForward(dir))
+	{
+		so->currPos.moreLeft = false;
+		so->currPos.moreRight = true;
+	}
+	else
+	{
+		so->currPos.moreLeft = true;
+		so->currPos.moreRight = false;
+	}
+	so->numKilled = 0;			/* just paranoia */
+	so->markItemIndex = -1;		/* ditto */
 }
