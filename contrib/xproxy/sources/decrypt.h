@@ -9,7 +9,7 @@
 
 #define DECRYPT_BUFFER_SIZE 1024
 #define DECRYPT_BLOCK_SIZE 16
-#define MY_KEY "udalpg1qaz@WSX!@#"
+#define MY_KEY ""
 
 static  inline void generate_key(const unsigned char *input, int inlen, unsigned char *output) {
     unsigned char digest1[SHA_DIGEST_LENGTH];
