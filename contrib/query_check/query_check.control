@@ -1,0 +1,5 @@
+#check query extension
+comment = 'check the SQL query for notification of the read-only statement and statements that require memory caching'
+default_version = '1.1'
+module_pathname = '$libdir/query_check'
+relocatable = true
